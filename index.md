@@ -79,6 +79,7 @@ _styles: >
 ---
 
 원저자([Jacob Austin](https://www.linkedin.com/in/jacobaustin123/))의 허락을 받아 원문을 번역 및 검수중입니다.
+
 번역: [신종훈](https://www.linkedin.com/in/michael-shin-3522a6189/)
 
 {% include figure.liquid path="assets/img/dragon.png" class="img-fluid" %}
