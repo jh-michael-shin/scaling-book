@@ -49,10 +49,6 @@ authors:
   - name: Reiner Pope<sup>*</sup>
     url: https://x.com/reinerpope
 
-translator:
-  - name: Michael Shin
-    url: "https://www.linkedin.com/in/michael-shin-3522a6189/"
-
 
 # Add a table of contents to your post.
 #   - make sure that TOC names match the actual section names
@@ -81,6 +77,10 @@ _styles: >
     font-size: 16px;
   }
 ---
+
+💡 원저자([Jacob Austin](https://www.linkedin.com/in/jacobaustin123/))의 허락을 받아 원문을 번역 및 검수중입니다.
+
+번역: [신종훈](https://www.linkedin.com/in/michael-shin-3522a6189/)
 
 {% include figure.liquid path="assets/img/dragon.png" class="img-fluid" %}
 
