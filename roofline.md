@@ -2,7 +2,7 @@
 layout: distill
 title: "All About Rooflines"
 # permalink: /main/
-description: "하드웨어에서 알고리즘을 실행할 때, 우리는 세 가지 요소에 의해 제한됩니다: 컴퓨터가 수학 연산을 얼마나 빨리 할 수 있는지 (OPs/second), 데이터를 이동시키는 데 사용할 수 있는 대역폭 (bytes/second), 그리고 데이터를 저장하는 데 사용할 수 있는 총 메모리 (bytes)입니다. 이러한 “(루프라인)roofline” 제약 조건은 특정 계산 시간에 대한 상한과 하한을 설정하게 해줍니다."
+description: "하드웨어에서 알고리즘을 실행할 때, 우리는 세 가지 요소에 의해 제한됩니다: 컴퓨터가 수학 연산을 얼마나 빨리 할 수 있는지 (OPs/second), 데이터를 이동시키는 데 사용할 수 있는 대역폭 (bytes/second), 그리고 데이터를 저장하는 데 사용할 수 있는 총 메모리 (bytes)입니다. 이러한 “루프라인(roofline)” 제약 조건은 특정 계산 시간에 대한 상한과 하한을 설정하게 해줍니다."
 date: 2025-02-04
 future: true
 htmlwidgets: true
@@ -145,21 +145,21 @@ $N\rightarrow\infty$ 일 때. 따라서 내적(dot product)의 arithmetic inten
 
 ### Visualizing rooflines
 
-We can visualize the tradeoff between memory and compute using a **roofline plot**, which plots the peak achievable FLOPs/s (throughput) of an algorithm on our hardware (the y-axis) against the arithmetic intensity of that algorithm (the x-axis). Here's an example log-log plot:
+메모리와 연산 간의 트레이드오프(tradeoff)를 **roofline plot**으로 시각화할 수 있습니다. 이는 우리 하드웨어에서 알고리즘의 최대 달성 가능한 FLOPs/s(throughput, y축)를 해당 알고리즘의 arithmetic intensity(x축)에 대해 나타낸 플롯입니다. 다음은 로그-로그(log-log) 플롯의 예입니다:
 
-{% include figure.liquid path="assets/img/roofline-improved.png" class="img-fluid" caption="<b>Figure:</b> an example roofline plot showing two algorithms with different arithmetic intensities (Algo 1 and Algo 2) and their corresponding theoretical peak throughput under different bandwidths (BW1 and BW2). In the red area, an algorithm is bandwidth bound at both bandwidths and is wasting some fraction of the hardware's peak FLOPs/s. The yellow area is bandwidth-bound only at the lower bandwidth (BW1). The green area is compute-bound at all bandwidths. Here, we are using the peak FLOPs/s of the accelerator and increasing bandwidth or improving intensity yield no benefit." %}
+{% include figure.liquid path="assets/img/roofline-improved.png" class="img-fluid" caption="<b>Figure:</b> 서로 다른 arithmetic intensity를 가진 두 알고리즘(Algo 1과 Algo 2)과 다른 대역폭(BW1, BW2) 하에서의 이론적 최대 처리량을 보여주는 루프라인 플롯 예시입니다. 빨간색 영역에서, 알고리즘은 두 대역폭 모두에서 대역폭 병목 상태이며 하드웨어의 최대 FLOPs/s의 일부를 낭비하고 있습니다. 노란색 영역은 더 낮은 대역폭(BW1)에서만 대역폭 병목 상태입니다. 녹색 영역은 모든 대역폭에서 연산 병목 상태입니다. 여기서는 가속기의 최대 FLOPs/s를 사용하고 있으며, 대역폭을 늘리거나 intensity를 개선해도 이득이 없습니다." %}
 
-Above, as the intensity increases (moving left to right), we initially see a linear increase in the performance of our algorithm (in FLOPs/s) until we hit the critical arithmetic intensity of the hardware, 240 in the case of the TPU v5e. Any algorithm with a lower intensity will be bandwidth (BW) bound and limited by the peak memory bandwidth (shown in red). Any algorithm to the right will fully utilize our FLOPs (shown in green). Here, Algo 1 is comms-bound and uses only a fraction of the total hardware FLOPs/s. Algo 2 is compute-bound. We can generally improve the performance of an algorithm either by increasing its arithmetic intensity or by increasing the memory bandwidth available (moving from BW1 to BW2).
+위 플롯에서, intensity가 증가함에 따라(왼쪽에서 오른쪽으로 이동), 알고리즘의 성능(FLOPs/s)은 하드웨어의 critical arithmetic intensity(TPU v5e의 경우 240)에 도달할 때까지 선형적으로 증가합니다. 이보다 낮은 intensity를 가진 알고리즘은 대역폭(BW) 병목 상태가 되며 최대 메모리 대역폭에 의해 제한됩니다(빨간색으로 표시). 오른쪽에 위치한 알고리즘은 우리의 FLOPs를 완전히 활용합니다(녹색으로 표시). 여기서 Algo 1은 통신 병목 상태이며 총 하드웨어 FLOPs/s의 일부만 사용합니다. Algo 2는 연산 병목 상태입니다. 일반적으로 arithmetic intensity를 높이거나 사용 가능한 메모리 대역폭을 늘려(BW1에서 BW2로 이동) 알고리즘의 성능을 향상시킬 수 있습니다.
 
 ### Matrix multiplication
 
-Let's look at our soon-to-be favorite algorithm: matrix multiplication (aka matmul). We write $X * Y \rightarrow Z$ where $X$ has shape $\text{bf16}[B, D]$, $Y$ has shape $\text{bf16}[D, F]$, and $Z$ has shape $\text{bf16}[B, F]$. To do the matmul we need to load $2DF + 2BD$ bytes, perform $2BDF$ FLOPs, and write $2BF$ bytes back.<d-footnote>Technically we perform $BF \times (2D - 1)$ FLOPs but this is close enough. This comes from $BDF$ multiplications and $BF * (D-1)$ additions. Section 4 has more details.</d-footnote> <d-footnote>Although the output of a matmul is technically float32 we usually cast down to bfloat16 before copying back to HBM.</d-footnote> Thus:
+우리가 곧 가장 좋아하게 될 알고리즘인 행렬 곱셈(일명 matmul)을 살펴보겠습니다. $X * Y \rightarrow Z$ 라고 쓸 때 $X$ 는 $\text{bf16}[B, D]$ 의 shape, $Y$ 는 $\text{bf16}[D, F]$ 의 shape, $Z$ 는 $\text{bf16}[B, F]$ 의 shape입니다. 이 matmul을 수행하려면 $2DF + 2BD$ bytes를 로드하고, $2BDF$ FLOPs를 수행하며, $2BF$ bytes를 다시 써야 합니다.<d-footnote>기술적으로는 $BF \times (2D - 1)$ FLOPs를 수행하지만, 이 근사치로도 충분합니다. 이는 $BDF$ 개의 곱셈과 $BF * (D-1)$ 개의 덧셈에서 나옵니다. 섹션 4에서 더 자세히 다룹니다.</d-footnote> <d-footnote>matmul의 출력은 기술적으로 float32이지만, 보통 HBM으로 다시 복사하기 전에 bfloat16으로 캐스팅합니다.</d-footnote> 따라서:
 
 $$\begin{equation}
 \text{Intensity}(\text{matmul}) = \frac{2BDF}{2BD + 2DF + 2BF} = \frac{BDF}{BD + DF + BF}
 \end{equation}$$
 
-We can get a nice simplification if we assume our "batch size" $B$ is small relative to $D$ and $F$. Then we get
+"배치 크기" $B$가  $D$와 $F$에 비해서 작다고 가정하면 간단한 식으로 만들 수 있습니다. 그러면 다음과 같습니다.
 
 $$\begin{equation}
 \frac{BDF}{BD + DF + BF} \approxeq \frac{BDF}{DF} = B
@@ -169,11 +169,12 @@ $$\begin{equation}
 \text{Intensity}(\text{matmul}) > \text{Intensity}(\text{TPU}) \implies B > \frac{1.97e14}{8.20e11} = 240
 \end{equation}$$
 
-This is a reasonable assumption for Transformer matmuls since for most of our models we have our local **token** batch size $B < 1024$ but $D$ and $F > 8000$. Thus we become compute-bound when our local batch size is greater than 240 tokens, a very simple rule!
+이는 대부분의 모델에서 로컬 **토큰** 배치 크기가 $B < 1024$ 이지만 $D$와 $F > 8000$이기 때문에 Transformer matmul에 대해 합리적인 가정입니다. 따라서 로컬 배치 크기가 240 토큰보다 클 때 연산 병목 상태가 된다는 매우 간단한 규칙을 얻을 수 있습니다!
 
-<p markdown=1 class="takeaway">**Takeaway:** for a bfloat16 matmul to be compute-bound on most TPUs, we need our local token batch size to be greater than 240.<d-footnote>Note that this is _not_ the batch size in the usual sense, where it means the batch size in sequences. It turns out most rooflines depend purely on the number of tokens, whether they belong to the same or different sequences. For instance if you have a batch size of 512 sequences of 4096 tokens on 128 GPUs, you have a total batch size of `512 * 4096 = 2M` tokens, and a local batch size of 16k tokens.</d-footnote></p>
+<p markdown=1 class="takeaway">**Takeaway:** bfloat16 matmul이 대부분의 TPU에서 연산 병목 상태가 되려면, 로컬 토큰 배치 크기가 240보다 커야 합니다.<d-footnote>이는 일반적인 의미의 배치 크기, 즉 시퀀스 단위의 배치 크기를 의미하는 것이 _아닙니다_. 대부분의 루프라인은 토큰이 동일한 시퀀스에 속하든 다른 시퀀스에 속하든 순전히 토큰 수에만 의존하는 것으로 나타났습니다. 예를 들어, 128개의 GPU에서 4096 토큰으로 구성된 512개 시퀀스의 배치 크기를 사용하는 경우, 총 배치 크기는 '512 * 4096 = 2M' 토큰이고, 로컬 배치 크기는 16k 토큰입니다.</d-footnote></p>
 
-This comes with a few notable caveats we'll explore in the problems below, particularly with respect to quantization (e.g., if we quantize our activations but still do full-precision FLOPs), but it's a good rule to remember. For GPUs, this number is slightly higher (closer to 300), but the same conclusion generally holds. When we [decompose a big matmul into smaller matmuls](https://docs.jax.dev/en/latest/pallas/tpu/matmul.html#your-first-matrix-multiplication-kernel), the tile sizes also matter.<d-footnote>When we do a large matrix multiplication, we need to break it down into smaller tiles which fit into VMEM/SMEM/TMEM, the higher-bandwidth on-chip memory. This causes us to load chunks multiple times, so it's no longer quite true that we only load $O(N^2)$ bytes. Consider an $(m, k) \cdot (k, n)$ matmul with tile sizes $bm$, $bk$, $bm$. Let $tm = m / bm$, etc. Then the total FLOPs is $2 \cdot tm \cdot tn \cdot tk \cdot m \cdot bk \cdot bm$ and the total bytes are $2 \cdot tm \cdot tn \cdot (tk \cdot (bm \cdot bk + bk \cdot bn) + 2 \cdot bm \cdot bn)$. Ignoring the last term, we have an intensity of $bm \cdot bn / (bm + bn)$, which is similar to the above.</d-footnote> We'll discuss the lower-level GPU and TPU details in the [next section](../tpus).
+이는 아래 문제들에서 탐구할 몇 가지 주목할 만한 예외 사항을 동반하며, 특히 양자화(quantization)와 관련이 있습니다(예: 활성화를 양자화하지만 여전히 full-precision FLOPs를 수행하는 경우). 하지만 기억해두면 좋은 규칙입니다. GPU의 경우 이 숫자는 약간 더 높지만(300에 가깝지만) 대체로 동일한 결론이 적용됩니다. [큰 matmul을 작은 matmul로 분해](https://docs.jax.dev/en/latest/pallas/tpu/matmul.html#your-first-matrix-multiplication-kernel)할 때, 타일 크기도 중요합니다.<d-footnote>When we do a large matrix multiplication, we need to break it down into smaller tiles which fit into VMEM/SMEM/TMEM, the higher-bandwidth on-chip memory. 
+큰 행렬 곱셈을 수행할 때는 연산을 더 작은 '타일(tile)'로 분해해서, 대역폭이 더 높은 온칩 메모리인 VMEM/SMEM/TMEM에 맞도록 만들어야 합니다. 이 과정에서 데이터 청크(chunk)를 여러 번 로드해야 하므로, 총 로드되는 데이터 양은 더 이상 $O(N^2)$ bytes 라고 단순하게 말할 수 없습니다. 예를 들어, $(m, k) \cdot (k, n)$ matmul의 타일 크기가  $bm$, $bk$, $bm$ 라고 하고 여기서 $tm = m / bm$, 등등 이라고 할 때, 총 FLOPs는 $2 \cdot tm \cdot tn \cdot tk \cdot m \cdot bk \cdot bm$ 이고 총 bytes는 $2 \cdot tm \cdot tn \cdot (tk \cdot (bm \cdot bk + bk \cdot bn) + 2 \cdot bm \cdot bn)$ 입니다. 마지막 항을 무시하면, intensity는 위와 유사하게 $bm \cdot bn / (bm + bn)$ 가 됩니다.</d-footnote> 하위 레벨의 GPU와 TPU의 세부 사항은 [다음 섹션에서 논의할 것입니다](../tpus).
 
 ### Network communication rooflines
 
