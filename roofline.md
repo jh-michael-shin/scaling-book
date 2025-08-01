@@ -79,7 +79,9 @@ _styles: >
   }
 ---
 
-원저자([Jacob Austin](https://www.jacobaustin.org/))의 허락을 받아 원문을 번역 및 검수중입니다. 해당 글의 1인칭은 원문 저자를 지칭합니다. 
+원저자([Jacob Austin](https://www.jacobaustin.org/))의 허락을 받아 원문을 번역 및 검수중입니다. 
+
+해당 글의 1인칭은 원문 저자를 지칭합니다. 
 
 번역: [신종훈](https://www.linkedin.com/in/michael-shin-3522a6189/)
 
