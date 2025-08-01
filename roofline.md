@@ -2,7 +2,7 @@
 layout: distill
 title: "All About Rooflines"
 # permalink: /main/
-description: "When we run algorithms on hardware, we're bounded by three things: how fast our computer can do math (OPs/second), the bandwidth available for moving data around (bytes/second), and the total memory available to store data (bytes). These “roofline” constraints let us upper and lower bound the time of a given computation."
+description: "하드웨어에서 알고리즘을 실행할 때, 우리는 세 가지 요소에 의해 제한됩니다: 컴퓨터가 수학 연산을 얼마나 빨리 할 수 있는지 (OPs/second), 데이터를 이동시키는 데 사용할 수 있는 대역폭 (bytes/second), 그리고 데이터를 저장하는 데 사용할 수 있는 총 메모리 (bytes)입니다. 이러한 “(루프라인)roofline” 제약 조건은 특정 계산 시간에 대한 상한과 하한을 설정하게 해줍니다."
 date: 2025-02-04
 future: true
 htmlwidgets: true
@@ -79,29 +79,33 @@ _styles: >
   }
 ---
 
+원저자([Jacob Austin](https://www.jacobaustin.org/))의 허락을 받아 원문을 번역 및 검수중입니다. 해당 글의 1인칭은 원문 저자를 지칭합니다. 
+
+번역: [신종훈](https://www.linkedin.com/in/michael-shin-3522a6189/)
+
 ## Where Does the Time Go?
 
-Let's start with an extremely simple question: *why does an algorithm take 50ms instead of 50s or 5ms*? What is actually happening within the model that takes substantial time and how long should we expect it to take?
+아주 간단한 질문으로 시작해 봅시다: *왜 어떤 알고리즘은 50s나 5ms가 아닌 50ms가 걸릴까요*? 모델 내부에서 실제로 상당한 시간이 걸리는 작업은 무엇이며, 얼마나 걸릴 것으로 예상해야 할까요?
 
-**Computation:** A deep learning model is effectively a bunch of matrix multiplications, each composed of floating-point multiplication and addition ‘operations' (FLOPs). Our accelerator speed determines how long these take to compute:
+**계산(Computation):** 딥러닝 모델은 사실상 여러 행렬 곱셈 덩어리이며, 각 행렬 곱셈은 부동소수점 곱셈과 덧셈 '연산'(FLOPs)으로 구성됩니다. 우리 가속기의 속도가 이 계산에 걸리는 시간을 결정합니다:
 
 $$\begin{equation}
 T_\text{math} = \frac{\text{Computation FLOPs}}{\text{Accelerator FLOPs/s}}
 \end{equation}$$
 
-For instance, an NVIDIA H100 can perform about 9.89e14 bfloat16<d-footnote>bf16 is short for <a href="https://en.wikipedia.org/wiki/Bfloat16_floating-point_format">bfloat16</a>, a 16-bit floating point format often used in ML.</d-footnote> FLOPs/s while a TPU v6e can perform 9.1e14 FLOPs/s. That means doing 1e12 FLOPs on an H100 will take (roughly) `1e12 / 9.89e14 = 1.01ms` and `1e12 / 9.1e14 = 1.1ms` on a TPU v6e.<d-footnote>Note that these chips are priced differently, and this comparison does not normalize to cost.</d-footnote>
+예를 들어, NVIDIA H100은 초당 약 9.89e14 bfloat16<d-footnote>bf16은 ML에서 자주 사용되는 16비트 부동소수점 형식인 <a href="https://en.wikipedia.org/wiki/Bfloat16_floating-point_format">bfloat16</a>의 줄임말입니다.</d-footnote> FLOPs를 수행할 수 있고, TPU v6e는 초당 9.1e14 FLOPs를 수행할 수 있습니다. 이는 H100에서 1e12 FLOPs를 수행하는 데 (대략) `1e12 / 9.89e14 = 1.01ms` 가 걸리고, TPU v6e에서는 `1e12 / 9.1e14 = 1.1ms` 가 걸린다는 의미입니다.<d-footnote>이 칩들은 가격이 다르며, 이 결과는 비용을 기준으로 정규화되지 않았음을 유의하세요.</d-footnote>
 
-**Communication within a chip:** *Within an accelerator*, tensors need to be transferred between on-chip memory (HBM) and the compute cores. You'll see the bandwidth of this link referred to as "HBM bandwidth"<d-footnote>NVIDIA also calls this "memory bandwidth."</d-footnote> On an H100, [this is about 3.35TB/s](https://www.nvidia.com/en-us/data-center/h100/) and on TPU v6e [this is about 1.6TB/s](https://cloud.google.com/tpu/docs/v6e)<d-footnote>While these are the advertised figures, they are often difficult to achieve in practice. For B100, few implementations have been able to achieve above 82% of the advertised bf16 throughput, while TPU v5p can generally get around 95%.</d-footnote>.
+**칩 내 통신(Communication within a chip):** *가속기 내에서*, 텐서는 온칩 메모리(HBM)와 연산 코어(compute cores) 사이에서 이동(transferred)되어야 합니다. 이 연결의 대역폭은 "HBM 대역폭"<d-footnote>NVIDIA는 이를 "메모리 대역폭"이라고도 부릅니다.</d-footnote> H100에서는, [약 3.35TB/s 이고](https://www.nvidia.com/en-us/data-center/h100/), TPU v6e에서는 [약 1.6TB/s 입니다](https://cloud.google.com/tpu/docs/v6e)<d-footnote>이는 광고된 수치이지만 실제로는 달성하기 어려운 경우가 많습니다. B100의 경우, 광고된 bf16 처리량의 82% 이상을 달성한 구현은 거의 없는 반면, TPU v5p는 일반적으로 약 95%를 달성할 수 있습니다.</d-footnote>.
 
-**Communication between chips:**  When we distribute a model *across multiple accelerators*, tensors frequently need to be transferred between them. There are often a few options for this on our hardware (ICI, DCN, and PCIe), each with different bandwidths. 
+**칩 간 통신(Communication between chips):**  모델을 *여러 가속기에* 분산시킬 때, 텐서는 번번이 가속기 사이에서 전송되어야 합니다. 우리 하드웨어에는 이를 위한 몇 가지 옵션(ICI, DCN, PCIe)이 있으며, 각각 다른 대역폭을 가집니다.
 
-Whether the communication is within a chip or between chips, we measure this in bytes/s and estimate the total communication time with:
+통신이 칩 내에서 이루어지든 칩 간에 이루어지든, 우리는 이를 bytes/s 단위로 측정하고 총 통신 시간을 다음과 같이 추정합니다:
 
 $$\begin{equation}
 T_\text{comms} = \frac{\text{Communication Bytes}}{\text{Network/Memory Bandwidth Bytes/s}}
 \end{equation}$$
 
-Typically (but not always), computation within a single chip can be overlapped with communication within a chip and between chips. This means **we can lower-bound training and inference time by using the maximum of computation and communication time**. We can also **upper-bound with their sum**. In practice, we optimize against the maximum as the algebra is simpler and we can usually come close to this bound by overlapping our communication and computation. If we optimize with the maximum in mind then the lower and upper bounds differ by at most a factor of 2 since $T_\text{math} + T_\text{comms} \leq 2 * \max(T_\text{math}, T_\text{comms})$. We then increase accuracy beyond this by modeling 'overlap regions' and overheads, which can be informed by profiling your specific model and target system.
+일반적으로(항상 그런 것은 아니지만), 단일 칩 내의 계산은 칩 내 및 칩 간 통신과 중첩될 수 있습니다. 이는 **계산 시간과 통신 시간 중 최대값을 사용하여 훈련 및 추론 시간의 하한**을 알 수 있음을 의미합니다. 또한 **그들의 합으로 상한**을 알 수 있습니다. 실제로는 최대값을 기준으로 최적화하는데, 대수적으로 더 간단하고 통신과 계산을 중첩시켜 이 한계에 가깝게 도달할 수 있기 때문입니다. 최대값을 염두에 두고 최적화하면 $T_\text{math} + T_\text{comms} \leq 2 * \max(T_\text{math}, T_\text{comms})$ 이므로 하한과 상한은 최대 2배 차이가 납니다. 이후 특정 모델과 대상 시스템을 프로파일링하여 얻을 수 있는 '중첩 영역(overlap regions)'과 오버헤드를 모델링하여 이보다 정확도를 높입니다.
 
 $$\begin{equation}
 T_\text{lower}=\max(T_\text{math}, T_\text{comms})
@@ -111,15 +115,15 @@ $$\begin{equation}
 T_\text{upper} = T_\text{math} + T_\text{comms}
 \end{equation}$$
 
-If we assume we can perfectly overlap communication and computation, when $T_\text{math} > T_\text{comms}$, we see full utilization from our hardware. We call this being "compute-bound". When $T_\text{comms} > T_\text{math}$, we tend to be "communication-bound" and at least some fraction of our accelerator FLOPs/s is wasted waiting for data to be passed around. One way to tell if an operation will be compute or communication-bound is to look at its "*arithmetic intensity*" or "*operational intensity*".
+만약 통신과 계산을 완벽하게 중첩시킬 수 있다고 가정하면, $T_\text{math} > T_\text{comms}$ 일 때 하드웨어가 full utilization이게 됩니다. 이를 "연산 병목(compute-bound)" 상태라고 합니다. $T_\text{comms} > T_\text{math}$ 일 때는 "통신 병목(communication-bound)" 상태가 되는 경향이 있으며, 가속기의 FLOPs/s 중 적어도 일부는 데이터가 오가는 것을 기다리느라 낭비됩니다. 어떤 연산이 연산 병목인지 통신 병목인지를 알 수 있는 한 가지 방법은 "*arithmetic intensity*" 또는 "*operational intensity*"를 보는 것입니다.
 
-**Definition:** the arithmetic intensity of an algorithm is given by the ratio of the total FLOPs it performs to the number of bytes it needs to communicate — either within a chip or between chips.
+**정의:** 알고리즘의 arithmetic intensity는 수행하는 총 FLOPs와 통신해야 하는 바이트 수(칩 내 또는 칩 간)의 비율로 주어집니다.
 
 $$\begin{equation}
 \text{Arithmetic Intensity} = \frac{\text{Computation FLOPs}}{\text{Communication Bytes}}
 \end{equation}$$
 
-Arithmetic intensity measures the "FLOPs per byte" of a given operation. To a first order, when our arithmetic intensity is high, $T_\text{math}$ is large compared to $T_\text{comms}$ and we typically use most of the available FLOPs. When the opposite is true, we spent more time on comms and waste FLOPs. The point where this crossover happens is the "peak arithmetic intensity" of our hardware, the ratio of peak accelerator FLOPs/s to accelerator bandwidth.
+Arithmetic intensity는 주어진 연산의 "byte 당 FLOPs"를 측정합니다. 대략적으로, Arithmetic intensity가 높을 때 $T_\text{math}$ 은 $T_\text{comms}$ 에 비해 크고, 우리는 일반적으로 사용 가능한 FLOPs의 대부분을 사용합니다. 반대의 경우, 우리는 통신에 더 많은 시간을 소비하고 FLOPs를 낭비합니다. 이 교차가 일어나는 지점이 하드웨어의 "최대 Arithmetic intensity", 즉 최대 가속기 FLOPs/s와 가속기 대역폭의 비율입니다.
 
 $$\begin{align*}
 T_\text{math} > T_\text{comms} \Leftrightarrow \frac{\text{Computation FLOPs}} {\text{Accelerator FLOPs/s}} > \frac{\text{Communication Bytes}}{\text{Bandwidth Bytes/s}} & \\[0.5em]
@@ -127,14 +131,15 @@ T_\text{math} > T_\text{comms} \Leftrightarrow \frac{\text{Computation FLOPs}} {
 \Leftrightarrow \text{Intensity}(\text{Computation}) > \text{Intensity}(\text{Accelerator}) & \\
 \end{align*}$$
 
-The quantity $\text{Intensity}(\text{Accelerator})$ is the arithmetic intensity at which our accelerator achieves its peak FLOPs/s. **For the TPU v5e MXU, this is about 240 FLOPs/byte**<d-footnote>The MXU is the matrix multiply unit on the TPU. We specify this here because the TPU has other accelerators like the VPU that are responsible for elementwise operations that have a different peak FLOPs/s.</d-footnote>, since the TPU can perform `1.97e14` FLOPs/s and load `8.2e11` bytes/s from HBM. That means if an algorithm has a lower arithmetic intensity than 240<d-footnote>This is only true if the algorithm loads its weights from HBM and runs in the MXU. As we'll discuss in the next section, we can sometimes store parameters in VMEM which has a much higher bandwidth. Many algorithms also run in the VPU, which has different performance characteristics.</d-footnote> FLOPs/byte, it will be bound by byte loading and thus we won't make good use of our hardware. Let's look at one such example:
+$\text{Intensity}(\text{Accelerator})$ 라는 양은 우리 가속기가 최대 FLOPs/s를 달성하는 arithmetic intensity입니다. **TPU v5e MXU의 경우, 이는 약 240 FLOPs/byte 입니다**<d-footnote>MXU는 TPU의 행렬 곱셈 유닛(matrix multiply unit)입니다. 여기서 MXU임을 명시하는 이유는, TPU에는 VPU처럼 원소별 연산을 담당하는 다른 가속기들이 있고, 이들의 최대 FLOPs/s는 다르기 때문입니다.</d-footnote>, TPU는 `1.97e14` FLOPs/s를 수행하고 HBM에서 `8.2e11` bytes/s를 로드할 수 있기 때문입니다. 즉, 어떤 알고리즘이 240<d-footnote>이는 알고리즘이 HBM에서 가중치를 로드하고 MXU에서 실행되는 경우에만 해당됩니다. 다음 섹션에서 논의하겠지만, 훨씬 더 높은 대역폭을 가진 VMEM에 파라미터를 저장할 수도 있습니다. 많은 알고리즘은 또한 다른 성능 특성을 가진 VPU에서 실행됩니다.</d-footnote> FLOPs/byte보다 낮은 arithmetic intensity를 가진다면, 바이트 로딩에 의해 병목이 발생하여 하드웨어를 효율적으로 사용하지 못하게 됩니다.이러한 예시를 하나 살펴보겠습니다:
 
-**<span style="color:#7ab5ff">Example (dot product)</span>:** to compute the dot product of two vectors in bfloat16 precision, `x • y: bf16[N], bf16[N] → bf16[1]`, we need to load $x$ and $y$ from memory, each of which has $2 * N = 2N$ bytes, perform $N$ multiplications and $N-1$ additions, and write $2$ bytes back into HBM
+**<span style="color:#7ab5ff">Example (내적, dot product)</span>:** bfloat16 정밀도로 두 벡터의 내적, `x • y: bf16[N], bf16[N] → bf16[1]` 을 계산하려면, 메모리에서 각각 $2 * N = 2N$ bytes인 $x$ 와 $y$ 를 로드하고, $N$ 번의 곱셈과 $N-1$ 번의 덧셈을 수행한 후, $2$ bytes를 HBM에 다시 써야 합니다
+
 $$\begin{equation}
 \text{Intensity}(\text{dot product}) = \frac{\text{Total FLOPs}}{\text{Total Bytes}} = \frac{N + N - 1}{2N + 2N + 2} = \frac{2N - 1}{4N + 2} \rightarrow \frac{1}{2}
 \end{equation}$$
 
-as $N\rightarrow\infty$. So the dot product has an arithmetic intensity of $\frac{1}{2}$ or, put another way, the dot product does 0.5 floating point operations per byte loaded. This means our arithmetic intensity is lower than that of our hardware and we will be communication-bound.<d-footnote>The 240 number above is not the correct comparison here since, as you will see in the next section, a dot-product is performed on the VPU and not the MXU. The TPU v5p VPU can do roughly 7e12 FLOPs / second, so its critical intensity is around 3, which means we are still somewhat comms-bound here. Either way, the fact that our intensity is low and constant means it is difficult to be compute-bound on most hardware.</d-footnote>
+$N\rightarrow\infty$ 일 때. 따라서 내적(dot product)의 arithmetic intensity는 $\frac{1}{2}$ 입니다, 다시 말해, 내적은 로드된 바이트당 0.5개의 부동소수점 연산을 수행합니다. 이는 우리의 arithmetic intensity가 하드웨어의 것보다 낮아 통신 병목(communication-bound) 상태가 될 것임을 의미합니다.<d-footnote>위의 240이라는 수치는 여기서 올바른 비교는 아닙니다. 다음 섹션에서 보겠지만, 내적(dot-product)은 MXU가 아닌 VPU에서 수행되기 때문입니다. TPU v5p VPU는 약 7e12 FLOPs / second를 수행할 수 있어 critical intensity는 약 3이며, 이는 여기서도 여전히 어느 정도 통신 병목(comms-bound) 상태임을 의미합니다. 어느 쪽이든, intensity가 낮고 일정하다는 사실은 대부분의 하드웨어에서 연산 병목(compute-bound) 상태가 되기 어렵다는 것을 의미합니다.</d-footnote>
 
 ### Visualizing rooflines
 

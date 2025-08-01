@@ -78,7 +78,7 @@ _styles: >
   }
 ---
 
-원저자([Jacob Austin](https://www.linkedin.com/in/jacobaustin123/))의 허락을 받아 원문을 번역 및 검수중입니다.
+원저자([Jacob Austin](https://www.jacobaustin.org/))의 허락을 받아 원문을 번역 및 검수중입니다. 해당 글의 1인칭은 원문 저자를 지칭합니다. 
 
 번역: [신종훈](https://www.linkedin.com/in/michael-shin-3522a6189/)
 
@@ -117,14 +117,14 @@ _styles: >
 * 여러 TPU에 걸쳐 배열(arrays)을 모으거나(gather), 흩뿌리거나(scatter), 재분배하는(re-distribute) 데 시간이 얼마나 걸릴까요?
 * 여러 장치에 다르게 분산된 행렬들을 어떻게 효율적으로 곱할 수 있을까요?
 
-{% include figure.liquid path="assets/img/pointwise-product.gif" class="img-small" caption="<b>Figure:</b> a diagram from <a href=\"tpus\">섹션 2</a> 의 다이어그램으로, TPU가 elementwise product을 수행하는 방법을 보여줍니다. 배열의 크기와 다양한 링크의 대역폭에 따라, 우리는 연산 병목(하드웨어의 최대 연산 용량 사용) 상태가 되거나 통신 병목(메모리 로딩에 의해 병목 현상 발생) 상태가 될 수 있습니다." %}
+{% include figure.liquid path="assets/img/pointwise-product.gif" class="img-small" caption="<b>Figure:</b> <a href=\"tpus\">섹션 2</a> 의 다이어그램으로, TPU가 elementwise product을 수행하는 방법을 보여줍니다. 배열의 크기와 다양한 링크의 대역폭에 따라, 우리는 연산 병목(하드웨어의 최대 연산 용량 사용) 상태가 되거나 통신 병목(메모리 로딩에 의해 병목 현상 발생) 상태가 될 수 있습니다." %}
 
-5년 전 ML 분야는 ConvNet, LSTM, MLP, 트랜스포머 등 다채로운 아키텍처의 향연이었지만, 지금은 대부분 트랜스포머만 남았습니다<d-cite key="transformers"></d-cite>. 저희는 트랜스포머 아키텍처의 모든 부분을 이해하는 것이 매우 중요하다고 생각합니다. 모든 행렬의 정확한 크기, 정규화(normalization)가 일어나는 위치, 각 부분에 있는 파라미터와 FLOPs<d-footnote>FLoating point OPs, 즉 필요한 덧셈과 곱셈의 총 횟수입니다. 많은 자료에서 FLOPs를 "초당 연산 횟수"로 사용하지만, 저희는 이를 명확히 나타내기 위해 FLOPs/s를 사용합니다.</d-footnote> 의 수까지 말이죠. [섹션 4](transformers)에서는 이러한 "트랜스포머 수학"을 꼼꼼하게 다루며, 훈련과 추론 모두에 대한 파라미터와 FLOPs를 계산하는 방법을 알아봅니다. 이를 통해 우리 모델이 얼마나 많은 메모리를 사용할지, 연산이나 통신에 얼마나 많은 시간을 할애할지, 그리고 언제 어텐션(attention)이 feed-forward 블록에 비해 중요해질지를 알 수 있습니다.
+5년 전 ML 분야는 ConvNet, LSTM, MLP, 트랜스포머 등 다채로운 아키텍처의 향연이었지만, 지금은 대부분 트랜스포머만 남았습니다<d-cite key="transformers"></d-cite>. 저희는 트랜스포머 아키텍처의 모든 부분을 이해하는 것이 매우 중요하다고 생각합니다. 모든 행렬의 정확한 크기, 정규화(normalization)가 일어나는 위치, 각 부분에 있는 파라미터와 FLOPs<d-footnote>FLoating point OPs, 즉 필요한 덧셈과 곱셈의 총 횟수입니다. 많은 자료에서 FLOPs를 "초당 연산 횟수"로 사용하지만, 저희는 이를 명확히 나타내기 위해 FLOPs/s를 사용합니다.</d-footnote> 의 수까지 말이죠. [섹션 4](transformers)에서는 이러한 "트랜스포머 수학"을 꼼꼼하게 다루며, 훈련과 추론 모두에 대한 파라미터와 FLOPs를 계산하는 방법을 알아봅니다. 이를 통해 우리 모델이 얼마나 많은 메모리를 사용할지, 연산이나 통신에 얼마나 많은 시간을 할애할지, 그리고 언제 attention이 feed-forward 블록에 비해 중요해질지를 알 수 있습니다.
 
 
 {% include figure.liquid path="assets/img/transformer-diagram.png" class="img-fluid" caption="<b>Figure:</b> 표준 트랜스포머 레이어로, 각 행렬 곱셈(matmul)은 원 안의 점으로 표시됩니다. 모든 파라미터(정규화 제외)는 보라색으로 표시됩니다. <a href=\"transformers\">섹션 4</a> 에서 이 다이어그램을 더 자세히 살펴봅니다." %}
 
-[섹션 5: Training](training) 과 [섹션 7: Inference](inference)은 이 글의 핵심으로, 다음과 같은 근본적인 질문을 다룹니다: 특정 크기의 모델과 주어진 수의 칩이 있을 때, 어떻게 모델을 병렬화하여 "strong scaling" 영역에 머무를 수 있을까? 이는 간단한 질문이지만 놀랍도록 복잡한 답을 가지고 있습니다. 넓게 보자면 모델을 여러 칩에 분산시키는 데 사용되는 4가지 주요 병렬 처리 기법(**데이터**, **텐서**, **파이프라인**, **expert**)이 있으며, 메모리 요구사항을 줄이기 위한 여러 다른 기법(**rematerialisation**, **옵티마이저/모델 샤딩(ZeRO)**, **호스트 오프로드**, **그래디언트 축적(gradient accumulation)**)이 있습니다. 여기서는 이러한 기법들 중 많은 것을 논의합니다.
+[섹션 5: 훈련](training) 과 [섹션 7: 추론](inference)은 이 글의 핵심으로, 다음과 같은 근본적인 질문을 다룹니다: 특정 크기의 모델과 주어진 수의 칩이 있을 때, 어떻게 모델을 병렬화하여 "strong scaling" 영역에 머무를 수 있을까? 이는 간단한 질문이지만 놀랍도록 복잡한 답을 가지고 있습니다. 넓게 보자면 모델을 여러 칩에 분산시키는 데 사용되는 4가지 주요 병렬 처리 기법(**데이터**, **텐서**, **파이프라인**, **expert**)이 있으며, 메모리 요구사항을 줄이기 위한 여러 다른 기법(**rematerialisation**, **옵티마이저/모델 샤딩(ZeRO)**, **호스트 오프로드**, **그래디언트 축적(gradient accumulation)**)이 있습니다. 여기서는 이러한 기법들 중 많은 것을 논의합니다.
 
 위의 섹션들을 다 읽고 나면, 새로운 아키텍처나 설정에 대해 스스로 병렬 처리 방식을 선택할 수 있게 되기를 바랍니다. [섹션 6](applied-training)과 [섹션 8](applied-inference)은 이러한 개념들을 인기 있는 오픈 소스 모델인 LLaMA-3에 적용하는 실용적인 튜토리얼입니다.
 
