@@ -168,67 +168,68 @@ $$\begin{equation}
 \text{Intensity}(\text{matmul}) > \text{Intensity}(\text{TPU}) \implies B > \frac{1.97e14}{8.20e11} = 240
 \end{equation}$$
 
-이는 대부분의 모델에서 로컬 **토큰** 배치 크기가 $B < 1024$ 이지만 $D$와 $F > 8000$이기 때문에 Transformer matmul에 대해 합리적인 가정입니다. 따라서 로컬 배치 크기가 240 토큰보다 클 때 연산 병목 상태가 된다는 매우 간단한 규칙을 얻을 수 있습니다!
+이는 대부분의 모델에서 로컬 **토큰** 배치 크기가 $B < 1024$ 이지만 $D$와 $F > 8000$이기 때문에 Transformer matmul에 대해 합리적인 가정입니다. 따라서 로컬 배치 크기가 240 토큰보다 클 때 연산 병목 상태가 된다는 매우 간단한 기준을 얻을 수 있습니다!
 
 <p markdown=1 class="takeaway">**Takeaway:** bfloat16 matmul이 대부분의 TPU에서 연산 병목 상태가 되려면, 로컬 토큰 배치 크기가 240보다 커야 합니다.<d-footnote>이는 일반적인 의미의 배치 크기, 즉 시퀀스 단위의 배치 크기를 의미하는 것이 _아닙니다_. 대부분의 루프라인은 토큰이 동일한 시퀀스에 속하든 다른 시퀀스에 속하든 순전히 토큰 수에만 의존하는 것으로 나타났습니다. 예를 들어, 128개의 GPU에서 4096 토큰으로 구성된 512개 시퀀스의 배치 크기를 사용하는 경우, 총 배치 크기는 '512 * 4096 = 2M' 토큰이고, 로컬 배치 크기는 16k 토큰입니다.</d-footnote></p>
 
-이는 아래 문제들에서 탐구할 몇 가지 주목할 만한 예외 사항을 동반하며, 특히 양자화(quantization)와 관련이 있습니다(예: 활성화를 양자화하지만 여전히 full-precision FLOPs를 수행하는 경우). 하지만 기억해두면 좋은 규칙입니다. GPU의 경우 이 숫자는 약간 더 높지만(300에 가깝지만) 대체로 동일한 결론이 적용됩니다. [큰 matmul을 작은 matmul로 분해](https://docs.jax.dev/en/latest/pallas/tpu/matmul.html#your-first-matrix-multiplication-kernel)할 때, 타일 크기도 중요합니다.<d-footnote>큰 행렬 곱셈을 수행할 때는 연산을 더 작은 '타일(tile)'로 분해해서, 대역폭이 더 높은 온칩 메모리인 VMEM/SMEM/TMEM에 맞도록 만들어야 합니다. 이 과정에서 데이터 청크(chunk)를 여러 번 로드해야 하므로, 총 로드되는 데이터 양은 더 이상 $O(N^2)$ bytes 라고 단순하게 말할 수 없습니다. 예를 들어, $(m, k) \cdot (k, n)$ matmul의 타일 크기가  $bm$, $bk$, $bm$ 라고 하고 여기서 $tm = m / bm$, 등등 이라고 할 때, 총 FLOPs는 $2 \cdot tm \cdot tn \cdot tk \cdot m \cdot bk \cdot bm$ 이고 총 bytes는 $2 \cdot tm \cdot tn \cdot (tk \cdot (bm \cdot bk + bk \cdot bn) + 2 \cdot bm \cdot bn)$ 입니다. 마지막 항을 무시하면, intensity는 위와 유사하게 $bm \cdot bn / (bm + bn)$ 가 됩니다.</d-footnote> lower-level GPU와 TPU의 세부 사항은 [다음 섹션에서 논의할 것입니다](../tpus).
+이는 아래 문제들에서 탐구할 몇 가지 주목할 만한 예외 사항을 동반하며, 특히 양자화(quantization)와 관련이 있습니다(예: 활성화를 양자화하지만 여전히 full-precision FLOPs를 수행하는 경우). 하지만 기억해두면 좋은 기준입니다. GPU의 경우 이 숫자는 약간 더 높지만(300에 가깝지만) 대체로 동일한 결론이 적용됩니다. [큰 matmul을 작은 matmul로 분해](https://docs.jax.dev/en/latest/pallas/tpu/matmul.html#your-first-matrix-multiplication-kernel)할 때, 타일 크기도 중요합니다.<d-footnote>큰 행렬 곱셈을 수행할 때는 연산을 더 작은 '타일(tile)'로 분해해서, 대역폭이 더 높은 온칩 메모리인 VMEM/SMEM/TMEM에 맞도록 만들어야 합니다. 이 과정에서 데이터 청크(chunk)를 여러 번 로드해야 하므로, 총 로드되는 데이터 양은 더 이상 $O(N^2)$ bytes 라고 단순하게 말할 수 없습니다. 예를 들어, $(m, k) \cdot (k, n)$ matmul의 타일 크기가  $bm$, $bk$, $bm$ 라고 하고 여기서 $tm = m / bm$, 등등 이라고 할 때, 총 FLOPs는 $2 \cdot tm \cdot tn \cdot tk \cdot m \cdot bk \cdot bm$ 이고 총 bytes는 $2 \cdot tm \cdot tn \cdot (tk \cdot (bm \cdot bk + bk \cdot bn) + 2 \cdot bm \cdot bn)$ 입니다. 마지막 항을 무시하면, intensity는 위와 유사하게 $bm \cdot bn / (bm + bn)$ 가 됩니다.</d-footnote> lower-level GPU와 TPU의 세부 사항은 [다음 섹션에서 논의할 것입니다](../tpus).
 
 ### Network communication rooflines
 
-All the rooflines we've discussed so far have been memory-bandwidth rooflines, _all within a single chip_. This shouldn't be taken as a rule. In fact, most of the rooflines we'll care about in this book involve communication between chips: usually matrix multiplications that involve matrices sharded across multiple TPUs.
+지금까지 논의한 모든 루프라인은 _단일 칩 내의_ 메모리 대역폭 루프라인이었습니다. 이를 기본으로 받아들여서는 안 됩니다. 사실, 이 책에서 우리가 관심을 가질 대부분의 루프라인은 칩 간의 통신을 포함합니다: 보통 여러 TPU에 걸쳐 샤딩된(sharded) 행렬을 포함하는 행렬 곱셈입니다.
 
-To pick a somewhat contrived example, say we want to multiply two big matrices $X\sim \text{bfloat16[B, D]}$ and $Y \sim \text{bfloat16[D, F]}$ which are split evenly across 2 TPUs/GPUs (along the $D$ dimension). To do this multiplication (as we'll see in [Section 3](../sharding)), we can multiply half of each matrix on each TPU (`A = X[:, :D // 2] @ Y[:D // 2, :]` on TPU 0 and `B = X[:, D // 2:] @ Y[D // 2:, :]` on TPU 1) and then copy the resulting "partial sums" to the other TPU and add them together. Say we can copy `4.5e10` bytes in each direction and perform `1.97e14` FLOPs/s on each chip. What are $T_\text{math}$ and $T_\text{comms}$?
+다소 작위적인 예를 들어본다면, 2개의 TPU/GPU에 ($D$ 차원을 따라) 균등하게 분할된 두 개의 큰 행렬 $X\sim \text{bfloat16[B, D]}$ 와 $Y \sim \text{bfloat16[D, F]}$ 를 곱하고 싶다고 가정해 봅시다. 이 곱셈을 수행하기 위해 ([섹션 3](../sharding)에서 보게 될 것처럼), 각 TPU에서 행렬의 절반을 곱하고 (`A = X[:, :D // 2] @ Y[:D // 2, :]` 는 TPU 0에서, `B = X[:, D // 2:] @ Y[D // 2:, :]` 는 TPU 1에서) 그 결과인 "partial sums(부분 합)" 을 다른 TPU로 복사하여 더할 수 있습니다. 각 방향으로 `4.5e10` bytes를 복사할 수 있고 각 칩에서 `1.97e14` FLOPs/s를 수행할 수 있다고 가정합시다. $T_\text{math}$ 와 $T_\text{comms}$ 는 얼마일까요?
 
-$T_\text{math}$ is clearly half of what it was before, since each TPU is doing half the work, i.e.<d-footnote>We're ignoring the FLOPs required to add the two partial sums together (another DF additions), but this is basically negigible.</d-footnote>
+$T_\text{math}$ 는 각 TPU가 작업의 절반을 수행하므로 이전의 절반이 분명합니다, 다시 말하자면<d-footnote>두 partial sums을 더하는 데 필요한 FLOPs(또 다른 DF 덧셈)는 무시하고 있습니다만, 이는 거의 무시할 수 있는 수준입니다.</d-footnote>
 
 $$T_\text{math} = \frac{2BDF}{2 \cdot \text{Accelerator FLOPs/s}} = \frac{BDF}{1.97e14}$$
 
-Now what about $T_\text{comms}$? This now refers to the communication time between chips! This is just the total bytes sent divided by the network bandwidth, i.e.
+그렇다면 $T_\text{comms}$ 는 어떨까요? 이제 이는 칩 간의 통신 시간을 의미합니다! 이는 총 전송된 바이트를 네트워크 대역폭으로 나눈 값입니다, 말하자면
 
 $$T_\text{comms} = \frac{2BF}{\text{Network Bandwidth}} = \frac{2BF}{4.5e10}$$
 
-Therefore we become compute-bound (now with respect to the inter-chip network) when $$\text{Intensity}(\text{matmul (2-chips)}) > \text{Intensity}(\text{TPU w.r.t. inter-chip network})$$ or equivalently when $\frac{BDF}{2BF} = \frac{D}{2} > \frac{1.97e14}{4.5e10} = 4377$ or $D > 8755$. Note that, unlike before, the critical threshhold now depends on $D$ and not $B$! Try to think why that is. This is just one such example, but we highlight that this kind of roofline is critical to knowing when we can parallelize an operation across multiple TPUs.
+따라서 우리는 (이제 칩 간 네트워크에 대해) 연산 병목 상태가 될 때는 $$\text{Intensity}(\text{matmul (2-chips)}) > \text{Intensity}(\text{TPU w.r.t. inter-chip network})$$ 또는 동등하게 $\frac{BDF}{2BF} = \frac{D}{2} > \frac{1.97e14}{4.5e10} = 4377$ 또는 $D > 8755$ 일 때입니다. 이전과 달리, critical threshhold이 이제 $D$ 에 의존합니다, $B$가 아니라요! 생각해보시면, 이는 단지 하나의 예일 뿐이지만, 이러한 종류의 루프라인이 여러 TPU에 걸쳐 연산을 병렬화할 수 있는 시점을 아는 데 중요하다는 것을 강조할 수 있습니다. 
 
 ## A Few Problems to Work
 
-**Question 1 [int8 matmul]:** Say we want to do $X[B, D] \cdot_D Y[D, F] \rightarrow Z[B, F]$ in int8 precision (1 byte per parameter) instead of bfloat16.<d-footnote>Here and throughout we'll use the notation $A \cdot_D B$ to indicate that the multiplication is performing a contraction over the D dimension. This is an abuse of einsum notation.</d-footnote>
+**Question 1 [int8 matmul]:** $X[B, D] \cdot_D Y[D, F] \rightarrow Z[B, F]$ 의 연산을 bfloat16 대신 int8 정밀도(파라미터당 1바이트)로 수행한다고 가정해 봅시다.<d-footnote>이 문제와 이후에는 $A \cdot_D B$ 표기법을 사용하여 곱셈이 D 차원에 대한 축소를 수행함을 나타낼 것입니다. 이는 아인슈타인 표기법(einsum notation)의 남용입니다.</d-footnote>
 
-1. How many bytes need to be loaded from memory? How many need to be written back to memory? 
-2. How many total OPs are performed? 
-3. What is the arithmetic intensity?
-4. What is a roofline estimate for $T_\text{math}$ and $T_\text{comms}$? What are reasonable upper and lower bounds for the runtime of the whole operation?
+1. 메모리에서 몇 바이트를 로드해야 하나요? 메모리에 다시 써야 하는 바이트는 몇 개인가요?
+2. 총 몇 개의 OPs(연산)가 수행되나요?
+3. arithmetic intensity는 얼마인가요?
+4. $T_\text{math}$ 과 $T_\text{comms}$ 에 대한 루프라인 추정치는 얼마인가요? 전체 연산의 실행 시간에 대한 현실적인 상한과 하한은 무엇인가요?
 
-Assume our HBM bandwidth is `8.1e11` bytes/s and our int8 peak OPs/s is `3.94e14`.
+HBM 대역폭은 `8.1e11` bytes/s 이고 int8의 peak OPs/s는 `3.94e14` 이라고 가정합니다.
 
-{% details Click here for the answer. %}
+{% details 답을 보려면 여기를 클릭하세요. %}
 
-1. Because we're storing our parameters in int8, we have 1 byte per parameter, so we have $$BD + DF$$ bytes loaded from HBM and $$BF$$ written back.
-2. This is the same as in bfloat16, but in theory int8 OPs/s should be faster. So this is still $2BDF$ FLOPs.
-3. Arithmetic intensity is $$2BDF / (BD + DF + BF)$$. If we make the same assumption as above about $$B \ll D$$ and $$B \ll F$$, we get an arithmetic intensity of $$2B$$, meaning our rule becomes $B > \text{HBM int8 arithmetic intensity} / 2$. Using the numbers given, this int8 intensity is `3.94e14 / 8.1e11 = 486`, so the rule is $B > 486 / 2 = 243$. Note that this is basically unchanged!
-4. $$T_\text{math} = 2BDF / 3.94e14$$ and $$T_\text{comms} = (BD + DF + BF) / 8.1e11$$, so a reasonable lower bound is $$\max(T_\text{math}, T_\text{comms})$$ and an upper bound is $$T_\text{math} + T_\text{comms}$$.
-
-{% enddetails %}
-
-**Question 2 [int8 + bf16 matmul]:** In practice we often do different weight vs. activation quantization, so we might store our weights in very low precision but keep activations (and compute) in a higher precision. Say we want to quantize our weights in int8 but keep activations (and compute) in bfloat16. At what batch size do we become compute bound? Assume `1.97e14` bfloat16 FLOPs/s.
-
-*Hint: this means specifically `bfloat16[B, D] * int8[D, F] -> bfloat16[B, F]` where $B$ is the "batch size".*
-
-{% details Click here for the answer. %}
-
-Again assuming B is small, we have 2BDF bfloat16 FLOPs but only DF weights (instead of 2DF in bfloat16). This means we become compute-bound when $$2B > 240$$ or $$B > 120$$. This is a lot lower, meaning if we can do int8 weight quantization (which is fairly easy to do) but still do bfloat16 FLOPs, we get a meaningful win in efficiency (although int8 OPs would be better).
+1. 파라미터를 int8로 저장하므로 파라미터당 1바이트입니다. 따라서 HBM에서 $$BD + DF$$ bytes를 로드하고 $$BF$$ 를 다시 씁니다.
+2. bfloat16과 동일하지만, 이론적으로 int8 OPs/s가 더 빨라야 합니다. 여전히 $2BDF$ FLOPs입니다.
+3. Arithmetic intensity 는 $$2BDF / (BD + DF + BF)$$입니다. 위와 동일하게, $$B \ll D$$ 이고 $$B \ll F$$ 이라고 가정하면, arithmetic intensity는 $$2B$$ 가 됩니다. 따라서 우리의 기본 조건은 $B > \text{HBM int8 arithmetic intensity} / 2$ 가 됩니다. 주어진 숫자를 사용하면, 이 int8 intensity는 `3.94e14 / 8.1e11 = 486`이므로, 최종 조건은 $B > 486 / 2 = 243$ 입니다. 보시면 거의 변하지 않았습니다!
+4. $$T_\text{math} = 2BDF / 3.94e14$$ 이고 $$T_\text{comms} = (BD + DF + BF) / 8.1e11$$ 이여서, 현실적인 하한(lower bound)은 $$\max(T_\text{math}, T_\text{comms})$$ 그리고 상한은 $$T_\text{math} + T_\text{comms}$$ 입니다.
 
 {% enddetails %}
 
-**Question 3:** Taking the setup from Question 2, make a roofline plot of peak FLOPs vs. $B$ for $F = D = 4096$ and $F = D = 1024$. *Use the exact number of bytes loaded, not an approximation.*
+**Question 2 [int8 + bf16 matmul]:** In practice we often do different weight vs. activation quantization, 
+실제로는 가중치와 활성화에 대해 다른 양자화를 사용하는 경우가 많습니다. 가중치는 매우 낮은 정밀도로 저장하고 활성화(및 계산)는 더 높은 정밀도로 유지할 수 있습니다. 가중치는 int8로 양자화하고 활성화(및 계산)는 bfloat16으로 유지하고 싶다고 가정해 봅시다. 어떤 배치 크기에서 연산 병목 상태가 될까요? `1.97e14` bfloat16 FLOPs/s를 가정합니다.
 
-{% details Click here for the answer. %}
+*Hint: $B$ 가 배치 크기일 때 `bfloat16[B, D] * int8[D, F] -> bfloat16[B, F]` 입니다.
 
-Here is the plot in question:
+{% details 답을 보려면 여기를 클릭하세요. %}
+
+이전처럼 B가 작다고 가정하면, 2BDF bfloat16 FLOPs를 수행하지만 가중치는 DF 만 필요합니다(bfloat16였다면 2DF). 이는 $$2B > 240$$ 또는 $$B > 120$$ 일 때 연산 병목(compute-bound) 상태가 됨을 의미합니다. 이는 훨씬 낮은 수치로, 만약 우리가 int8 가중치 양자화(비교적 쉽게 할 수 있음)를 하면서도 bfloat16 FLOPs를 수행할 수 있다면, 효율성 면에서 의미 있는 이득을 얻을 수 있다는 것을 의미합니다(물론 int8 OPs가 더 좋겠지만요).
+
+{% enddetails %}
+
+**Question 3:** Question 2의 설정을 유지하며, $F = D = 4096$ 와 $F = D = 1024$ 에 대해 peak FLOPs vs. $B$ 의 루프라인 플롯을 만드세요. *근사치가 아닌 정확한 로드된 bytes 수를 사용하세요.*
+
+{% details 답을 보려면 여기를 클릭하세요. %}
+
+해당 플롯은 다음과 같습니다:
 
 {% include figure.liquid path="assets/img/roofline-plot-q3.png" class="img-fluid img-small" %}
 
-Note that both models eventually acheive the peak hardware FLOPs/s, but the larger D/F achieve it sooner. D=F=1024 almost doubles the critical batch size. The code to generate this figure is here:
+두 모델 모두 결국 최대 하드웨어 FLOPs/s에 도달하지만, 더 큰 D/F가 더 빨리 도달하는 것을 보실 수 있습니다. D=F=1024는 임계(critical) 배치 크기를 거의 두 배로 만듭니다. 위의 플롯을 생성하는 코드는 다음과 같습니다:
 
 ```py
 import matplotlib.pyplot as plt
@@ -257,24 +258,24 @@ plt.grid()
 
 {% enddetails %}
 
-**Question 4:** What if we wanted to perform $\text{int8[B, D]} *_D \text{int8[B, D, F]} \rightarrow \text{int8[B, F]}$ where we imagine having a different matrix for each batch element. What is the arithmetic intensity of this operation?
+**Question 4:** 만약 각 배치 element에 대해 다른 행렬이 있다고 가정하며 $\text{int8[B, D]} *_D \text{int8[B, D, F]} \rightarrow \text{int8[B, F]}$ 를 수행한다면, 이 연산의 arithmetic intensity는 얼마인가요?
 
-{% details Click here for the answer. %}
+{% details 답을 보려면 여기를 클릭하세요. %}
 
-Let's start by looking at the total FLOPs and comms.
+총 FLOPs와 통신량을 살펴보는 것으로 시작하겠습니다.
 
-1. Total FLOPs: the FLOPs is basically the same, since we're doing the same number of $$BD \times DF$$ matmuls (this is discussed more in section 4). So this is just $$2BDF$$.
-2. Total comms: we have a lot more comms here: $$BD + BDF + BF$$.
-3. Therefore, our arithmetic intensity is now actually $$2BDF / (BD + BDF + BF)$$. Since $$BDF$$ dominates the denominator, this is roughly $$2$$. So instead of it depending on the batch size, this is essentially constant. This is bad because it means we'll basically always be comms bound no matter what.
-
-{% enddetails %}
-
-**Problem 5 [Memory Rooflines for GPUs]:** Using the [spec sheet provided by NVIDIA for the H100](https://www.nvidia.com/en-us/data-center/h100/), calculate the batch size at which a matrix multiplication will become compute-bound. *Note that the Tensor Core FLOPs numbers are twice the true value since they're only achievable with structured sparsity.*
-
-{% details Click here for the answer. %}
-
-From the spec sheet, we see that the reported bfloat16 FLOPs value is `1.979e15` FLOPs/s with an asterisk noting "with sparsity". The true value is half this without sparsity, meaning close to `1e15` FLOPs/s. The memory bandwidth is 3.35TB/s, or `3.35e12` bytes / second. Thus $B_\text{crit}$ is `1e15 / 3.35e12 = 298`, rather similar to the TPU.
+1. 총 FLOPs: FLOPs는 기본적으로 동일합니다. 동일한 수의 $$BD \times DF$$ matmuls을 수행하니까요(이는 섹션 4에서 더 자세히 다룹니다). 답은 $$2BDF$$ 입니다.
+2. 총 통신량: 이 경우에 훨씬 더 많은 통신량이 발생합니다: $$BD + BDF + BF$$.
+3. 따라서 우리의 arithmetic intensity는 $$2BDF / (BD + BDF + BF)$$. 분모에서 $$BDF$$ 가 지배적이므로, 대략 $$2$$ 입니다. 따라서 배치 크기에 의존하는 대신 본질적으로 상수입니다, 즉 일정하죠. 다만 이는 우리가 거의 항상 통신 병목 상태가 될 것임을 의미하므로 좋은건 아닙니다.
 
 {% enddetails %}
 
-<h3 markdown=1 class="next-section">That's it for Part 1! For Part 2, looking at how real TPUs handle FLOPs and communication, [click here](../tpus).</h3>
+**Problem 5 [Memory Rooflines for GPUs]:** [ NVIDIA가 H100에 대해 제공한 스펙 자료](https://www.nvidia.com/en-us/data-center/h100/)를 사용하여, 행렬 곱셈이 연산 병목 상태가 되는 배치 크기를 계산하세요. *Tensor Core FLOPs 수치는 실제 값의 두 배의 숫자입니다, 해당 수치는 structured sparsity으로만 달성 가능해서요*
+
+{% details 답을 보려면 여기를 클릭하세요. %}
+
+스펙 자료에서 보고된 bfloat16 FLOPs 값은 `1.979e15` FLOPs/s이며 "희소성 포함(with sparsity)"이라는 별표가 있습니다. 희소성이 없는 실제 값은 이 값의 절반이므로, 거의 `1e15` FLOPs/s에 가깝습니다. 메모리 대역폭은 3.35TB/s, 즉 `3.35e12` bytes / second입니다. 따라서 $B_\text{crit}$ 는 `1e15 / 3.35e12 = 298` 이며, TPU와 상당히 유사합니다.
+
+{% enddetails %}
+
+<h3 markdown=1 class="next-section">파트 1은 여기까지입니다! 실제 TPU가 FLOPs와 통신을 어떻게 처리하는지 살펴보는 파트 2를 보려면, [여기를 클릭하세요](../tpus).</h3>
