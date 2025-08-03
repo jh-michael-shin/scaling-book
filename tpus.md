@@ -2,7 +2,7 @@
 layout: distill
 title: "How to Think About TPUs"
 # permalink: /main/
-description: "This section is all about how TPUs work, how they're networked together to enable multi-chip training and inference, and how this affects the performance of our favorite algorithms. There's even some good stuff for GPU users too!"
+description: "이 섹션에서는 TPU가 어떻게 작동하는지, 멀티칩 훈련 및 추론을 위해 어떻게 서로 연결되는지, 그리고 이가 우리가 즐겨 사용하는 알고리즘의 성능에 어떤 영향을 미치는지에 대해 자세히 다룹니다. GPU 사용자에게도 유용한 정보가 있습니다!"
 date: 2025-02-04
 future: true
 htmlwidgets: true
@@ -83,36 +83,44 @@ _styles: >
   }
 ---
 
+<p markdown=1 class="takeaway">
+<b>번역 안내:</b> 원저자([Jacob Austin](https://www.jacobaustin.org/))의 허락을 받아 원문을 번역 중입니다.<br> 
+해당 글의 1인칭은 원문 저자를 지칭합니다.<br> 
+원문: [How to Scale Your Model](https://jax-ml.github.io/scaling-book/)<br> 
+번역: [신종훈](https://www.linkedin.com/in/michael-shin-3522a6189/)</p>
+
 ## What Is a TPU?
 
-**A TPU is basically a compute core that specializes in matrix multiplication (called a TensorCore) attached to a stack of fast memory (called high-bandwidth memory or HBM)<d-cite key="tpu_paper"></d-cite>.** Here's a diagram:
+**TPU는 기본적으로 행렬 곱셈에 특화된 연산 코어(TensorCore)가 빠른 메모리 스택(고대역폭 메모리 또는 HBM)에 부착된 형태입니다<d-cite key="tpu_paper"></d-cite>.** 아래는 TPU의 다이어그램입니다:
 
-{% include figure.liquid path="assets/img/tpu-chip.png" class="img-fluid" caption="<b>Figure:</b> the basic components of a TPU chip. The TensorCore is the gray left-hand box, containing the matrix-multiply unit (MXU), vector unit (VPU), and vector memory (VMEM)." %}
+{% include figure.liquid path="assets/img/tpu-chip.png" class="img-fluid" caption="<b>Figure:</b> TPU 칩의 기본 구성 요소. TensorCore는 회색의 왼쪽 박스로, 행렬 곱셈 유닛(MXU), 벡터 유닛(VPU), 벡터 메모리(VMEM)를 포함합니다." %}
 
-You can think of the TensorCore as basically just being a really good matrix multiplication machine, but it has a few other functions worth noting. The TensorCore has three key units:
+TensorCore는 기본적으로 정말 뛰어난 행렬 곱셈 기계라고 생각할 수 있지만, 다른 주목할 만한 몇 가지 기능도 있습니다. TensorCore에는 세 가지 핵심 유닛이 있습니다:
 
-* The **MXU** (Matrix Multiply Unit) is the core of the TensorCore. For most TPU generations, it performs one `bfloat16[8,128] @ bf16[128,128] -> f32[8,128]` matrix multiply<d-footnote>TPU v6e (Trillium) has a 256x256 MXU, while all previous generations use 128x128</d-footnote> every 8 cycles using a systolic array (see <a href="#appendix-b-how-does-a-systolic-array-work">Appendix B</a> for details).  
-  * This is about `5e13` bf16 FLOPs/s per MXU at 1.5GHz on TPU v5e. Most TensorCores have 2 or 4 MXUs, so e.g. the total bf16 FLOPs/s for TPU v5e is `2e14`.  
-  * TPUs also support lower precision matmuls with higher throughput (e.g. each TPU v5e chip can do `4e14` int8 OPs/s).
+* **MXU** (Matrix Multiply Unit)는 TensorCore의 핵심입니다. 대부분의 TPU 세대에서, MXU는 시스톨릭 배열(systolic array)을 사용하여 8 사이클마다 `bfloat16[8,128] @ bf16[128,128] -> f32[8,128]` 행렬 곱셈을 한 번 수행합니다
 
-* The **VPU** (Vector Processing Unit) performs general mathematical operations like ReLU activations or pointwise addition or multiplication between vectors. Reductions (sums) are also performed here. <a href="#appendix-c-tpu-internals">Appendix C</a> provides more details. 
-* **VMEM** (Vector Memory) is an on-chip scratchpad located in the TensorCore, close to the compute units. It is much smaller than HBM (for example, 128 MiB on TPU v5e) but has a much higher bandwidth to the MXU. VMEM operates somewhat like an L1/L2 cache on CPUs but is much larger and programmer-controlled. Data in HBM needs to be copied into VMEM before the TensorCore can do any computation with it.
+* **MXU** (Matrix Multiply Unit)는 TensorCore의 핵심입니다. 대부분의 TPU 세대에서, MXU는 시스톨릭 배열(systolic array)을 사용하여 8 사이클마다 `bfloat16[8,128] @ bf16[128,128] -> f32[8,128]` 행렬 곱셈<d-footnote>TPU v6e (Trillium)는 256x256 MXU를 사용하며, 이전 세대는 모두 128x128을 사용합니다.</d-footnote> 한 번 수행합니다 (<a href="#appendix-b-how-does-a-systolic-array-work">Appendix B</a> 참조).  
+  * 이는 TPU v5e에서 1.5GHz로 작동할 때 MXU당 약 `5e13` bf16 FLOPs/s에 해당합니다. 대부분의 TensorCore에는 2개 또는 4개의 MXU가 있으므로, 예를 들어 TPU v5e의 총 bf16 FLOPs/s는 `2e14`입니다.  
+  * TPU는 또한 더 높은 처리량을 가진 더 낮은 정밀도의 matmul도 지원합니다 (예: 각 TPU v5e 칩은 `4e14` int8 OPs/s를 수행할 수 있습니다).
 
-**TPUs are very, very fast at matrix multiplication**. It's mainly what they do and they do it well. [TPU v5p](https://cloud.google.com/tpu/docs/v5p#system_architecture), one of the most powerful TPUs to date, can do `2.5e14` bf16 FLOPs / second / core or `5e14` bf16 FLOPs / sec / chip. A single pod of 8960 chips can do 4 exaflops / second. That's *a lot*. That's one of the most powerful supercomputers in the world. And Google has a lot of them.<d-footnote>TPUs, and their systolic arrays in particular, are such powerful hardware accelerators because matrix multiplication is one of the few algorithms that uses $O(n^3)$ compute for $O(n^2)$ bytes. That makes it very easy for an ordinary ALU to be bottlenecked by compute and not by memory bandwidth.</d-footnote>
+* **VPU** (Vector Processing Unit)는 ReLU 활성화나 벡터 간의 원소별 덧셈 또는 곱셈과 같은 일반적인 수학 연산을 수행합니다. Reduction(sums) 연산도 여기서 수행됩니다. 자세한 내용은 <a href="#appendix-c-tpu-internals">Appendix C</a> 를 참조하시면 됩니다. 
+* **VMEM** (Vector Memory)은 TensorCore 내부에 위치한 온칩(on-chip) 스크래치패드로, 연산 유닛에 근접해있습니다. HBM보다 훨씬 작지만(예: TPU v5e에서는 128MiB) MXU와의 대역폭은 훨씬 높습니다. VMEM은 CPU의 L1/L2 캐시와 꽤나 유사하게 작동하지만, 훨씬 크고 프로그래머가 제어(programmer-controlled)할 수 있습니다. HBM의 데이터는 TensorCore가 계산을 수행하기 전에 VMEM으로 복사되어야 합니다.
 
-The diagram above also includes a few other components like SMEM and the scalar unit, which are used for control flow handling and are discussed briefly in <a href="#appendix-c-tpu-internals">Appendix C</a>, but aren't crucial to understand. On the other hand, HBM is important and fairly simple:
+**TPU는 행렬 곱셈이 아주, 아주 빠릅니다**. TPU의 주요 업무이기도 하고 잘 하기도 합니다. 지금까지 가장 강력한 TPU 중 하나인 [TPU v5p](https://cloud.google.com/tpu/docs/v5p#system_architecture)는 코어당 초당 `2.5e14` bf16 FLOPs / second 또는 칩당 `5e14` bf16 FLOPs / second 을 수행할 수 있습니다. 8960개 칩으로 구성된 단일 pod는 초당 4 exaflops를 처리할 수 있습니다. 이는 *어마어마한* 양입니다. 이는 세계에서 가장 강력한 슈퍼컴퓨터 중 하나이며, 구글은 이를 다수 보유하고 있습니다.<d-footnote>TPU와 특히 이의 시스톨릭 배열(systolic arrays)이 이토록 강력한 하드웨어 가속기인 이유는, 행렬 곱셈이 $O(n^2)$ 바이트에 대해 $O(n^3)$의 연산을 사용하는 몇 안 되는 알고리즘 중 하나이기 때문입니다. 이로 인해 일반적인 ALU가 메모리 대역폭이 아닌 연산 자체에 의해 병목 현상을 겪기 매우 쉽습니다.</d-footnote>
 
-* **HBM** (High Bandwidth Memory) is a big chunk of fast memory that stores tensors for use by the TensorCore. HBM usually has capacity on the order of tens of gigabytes (for example, [TPU v5e has 16GiB of HBM](https://cloud.google.com/tpu/docs/v5e#system_architecture)).
+위의 다이어그램에는 제어 흐름 처리(control flow handling)에 사용되는 SMEM 및 스칼라(scalar) 유닛과 같은 몇 가지 다른 구성 요소도 포함되어 있으며, 이는 <a href="#appendix-c-tpu-internals">Appendix C</a>에서 짧게 다루지만, 꼭 이해하셔야 하지는 않습니다. 반면에 HBM은 중요하면서 또한 비교적 간단합니다:
 
-  * When needed for a computation, tensors are streamed out of HBM through VMEM (see below) into the MXU and the result is written from VMEM back to HBM.
+* **HBM** (High Bandwidth Memory) 은 TensorCore에서 사용할 텐서를 저장하는 큰 용량의 빠른 메모리입니다. HBM은 보통 수십 기가바이트의 용량을 가집니다(예를 들자면, [TPU v5e는 16GiB의 HBM을 가짐](https://cloud.google.com/tpu/docs/v5e#system_architecture)).
 
-  * The bandwidth between HBM and the TensorCore (through VMEM) is known as "HBM bandwidth” (usually around 1-2TB/sec) and limits how fast computation can be done in memory-bound workloads.
+  * 계산이 필요할 때, 텐서는 HBM에서 VMEM(아래 예제 있음)을 통해 스트리밍되어 MXU로 들어가고, 결과는 VMEM에서 다시 HBM으로 쓰입니다.
+  
+  * HBM과 TensorCore(VMEM을 통해) 간의 대역폭은 "HBM 대역폭” (보통 1-2TB/sec)이라 하며, 메모리 병목(memory-bound) 워크로드에서 계산이 얼마나 빨리 수행할 수 있는지의 제약 사항이 됩니다. 
 
-**Generally, all TPU operations are pipelined and overlapped.** To perform a matmul $X \cdot A \to Y$, a TPU would first need to copy chunks of matrices $A$ and $X$ from HBM into VMEM, then load them into the MXU which multiplies chunks of 8x128 (for $X$) and 128x128 (for $A$), then copy the result chunk by chunk back to HBM. To do this efficiently, the matmul is pipelined so the copies to/from VMEM are overlapped with the MXU work. This allows the MXU to continue working instead of waiting on memory transfers, keeping matmuls compute-bound, not memory-bound.
+**보통 모든 TPU 연산은 파이프라인화되고 중첩됩니다.** matmul $X \cdot A \to Y$ 를 수행하기 위해, TPU는 먼저 HBM에서 $A$ 와 $X$ 행렬의 청크를 VMEM으로 복사한 다음, 이를 MXU로 로드하여 8x128($X$의 경우) 및 128x128($A$의 경우) 청크를 곱하고, 그 결과를 청크 단위로 다시 HBM에 복사합니다. 이를 효율적으로 수행하기 위해, matmul은 VMEM으로/에서 복사하는 작업이 MXU 작업과 중첩되도록 파이프라인화됩니다. 이를 통해 MXU는 메모리 전송을 기다리지 않고 계속 작동할 수 있으며, matmul이 메모리 병목이 아닌 연산 병목 상태를 유지하게 합니다.
 
-Here's an example of how you might perform an elementwise product from HBM:
+다음은 HBM에서 원소별 곱셈(elementwise product)을 수행하는 방법의 예제입니다:
 
-{% include figure.liquid path="assets/img/pointwise-product.gif" caption="<b>Figure:</b> an animation showing a pointwise product performed on TPU, with bytes loaded from HBM. Note how bytes are streamed out of memory in chunks and partial results are pipelined back without waiting for the full array to be materialized." %}
+{% include figure.liquid path="assets/img/pointwise-product.gif" caption="<b>Figure:</b> HBM에서 바이트를 로드하여 TPU에서 원소별 곱셈(pointwise product)을 수행하는 애니메이션. 바이트가 메모리에서 청크 단위로 스트리밍되고, 전체 배열이 구체화되기를 기다리지 않고 부분 결과가 파이프라인으로 다시 전송되는 방식을 주의 깊게 봐주세요." %}
 
 A matmul would look nearly identical except it would load into the MXU instead of the VPU/Vector unit, and the loads and stores would occur in a different order, since the same weight chunk is used for multiple chunks of activations. You can see chunks of data streaming into VMEM, then into the VREGs (vector registers), then into the Vector Unit, then back into VMEM and HBM. As we're about to see, if the load from HBM to VMEM is slower than the FLOPs in the Vector Unit (or MXU), we become "bandwidth bound” since we're starving the VPU or MXU of work.
 
