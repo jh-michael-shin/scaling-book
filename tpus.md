@@ -132,25 +132,25 @@ VMEM 대역폭은 HBM 대역폭보다 약 22배 높으므로, VMEM에서 읽고 
 
 {% include figure.liquid path="assets/img/tpu-bandwidth.png" class="img-fluid" %}
 
-**A TPU chip typically (but not always) consists of two TPU cores which share memory and can be thought of as one large accelerator** with twice the FLOPs (known as a "megacore" configuration). This has been true since TPU v4. Older TPU chips have separate memory and are regarded as two separate accelerators (TPU v3 and older). Inference-optimized chips like the TPU v5e only have one TPU core per chip.
+**TPU 칩은 일반적으로(항상 그런 것은 아니지만) 메모리를 공유하는 두 개의 TPU 코어로 구성되며, 두 배의 FLOPs를 가진 하나의 큰 가속기("메가코어(megacore)" 구성)로 간주될 수 있습니다.** TPU v4 이후로는 이렇게 구성되어 있습니다. 구형 TPU 칩(TPU v3 및 이전)은 메모리가 분리되어 있으며 두 개의 별도 가속기로 간주됩니다. TPU v5e와 같은 추론에 최적화된 칩은 칩당 하나의 TPU 코어만 가지고 있습니다.
 
 {% include figure.liquid path="assets/img/cores.png" class="img-fluid img-small" %}
 
-**Chips** are arranged in **sets of 4 on a ‘tray'** connected to a **CPU host via PCIe network.**  This is the format most readers will be familiar with, 4 chips (8 cores, though usually treated as 4 logical megacores) exposed through Colab or a single TPU-VM. For inference chips like the TPU v5e, we have 2 trays per host, instead of 1, but also only 1 core per chip, giving us 8 chips = 8 cores.<d-footnote>On Cloud TPU VMs, each tray is exposed as part of a separate VM, so there are once again 4 cores visible.</d-footnote>
+**칩**은 **'트레이(tray)' 위에 4개 세트**로 배열되어 **PCIe 네트워크를 통해 CPU 호스트에 연결**됩니다. Colab이나 단일 TPU-VM을 통해 4개의 칩(8개 코어지만, 보통 4개의 논리적 메가코어로 취급됨)으로 보여 이러한 구성이 대부분의 독자에게 익숙한 형식일 것입니다. TPU v5e와 같은 추론 칩의 경우, 호스트당 1개가 아닌 2개의 트레이가 있지만, 칩당 코어는 1개뿐이므로 8개 칩 = 8개 코어가 됩니다.<d-footnote>Cloud TPU VM에서는 각 트레이가 별도의 VM의 일부로 노출되므로, 다시 4개의 코어만 보입니다.</d-footnote>
 
 {% include figure.liquid path="assets/img/pcie.png" class="img-fluid" %}
 
-**PCIe bandwidth is limited:** Like the HBM $\leftrightarrow$ VMEM link, the CPU $\leftrightarrow$ HBM PCIe connection has a specific bandwidth that limits how quickly you can load from host memory to HBM or vice-versa. PCIe bandwidth for TPU v4 is 16GB / second each way, for example, so close to 100x slower than HBM. We *can* load/offload data into the host (CPU) RAM, but not very quickly.
+**PCIe 대역폭은 제한적입니다:** HBM $\leftrightarrow$ VMEM 링크와 마찬가지로, CPU $\leftrightarrow$ HBM PCIe 연결은 호스트 메모리에서 HBM으로 또는 그 반대로 얼마나 빨리 로드할 수 있는지를 제한하는 특정 대역폭을 가집니다. 예를 들어, TPU v4의 PCIe 대역폭은 각 방향으로 초당 16GB이므로, HBM보다 거의 100배 느립니다. 우리는 호스트(CPU) RAM으로 데이터를 로드/오프로드할 수 *있지만*, 그다지 빠르지는 않습니다.
 
 ## TPU Networking
 
-**Chips are connected to each other through the ICI network in a Pod**. In older generations (TPU v2 and TPU v3), inference chips (e.g., TPU v5e), and Trilium (TPU v6e), ICI ("inter-chip interconnects”) connects the 4 nearest neighbors (with edge links to form a 2D torus). TPU v4 and TPU v5p are connected to the nearest 6 neighbors (forming a 3D torus). Note these connections do **not** go through their hosts, they are direct links between chips.
+**칩은 Pod 내에서 ICI 네트워크를 통해 서로 연결됩니다.** 구형 세대(TPU v2 및 TPU v3), 추론 칩(예: TPU v5e), 그리고 Trilium (TPU v6e)에서, ICI("inter-chip interconnects")는 가장 가까운 4개의 이웃을 연결합니다(edge 링크로 2D torus를 형성함). TPU v4와 TPU v5p는 가장 가까운 6개의 이웃에 연결됩니다(3D torus를 형성함). 이러한 연결은 호스트를 통하지 **않고**, 칩 간의 직접적인 링크라는 점에 유의하세요.
 
 {% include figure.liquid path="assets/img/ici-wraparound.png" class="img-fluid img-small" %}
 
-The toroidal structure reduces the maximum distance between any two nodes from $N$ to $N / 2$, making communication much faster. TPUs also have a "twisted torus” configuration that wraps the torus in a Mobius-strip like topology to further reduce the average distance between nodes.
+토로이드(toroidal) 구조는 임의의 두 노드 간의 최대 거리를 $N$ 에서 $N / 2$ 로 줄여 통신을 훨씬 빠르게 만듭니다. TPU는 또한 노드 간의 평균 거리를 더욱 줄이기 위해 뫼비우스의 띠와 같은 토폴로지로 토러스를 감싸는 "트위스티드 토러스(twisted torus)" 구성을 가지고 있습니다.
 
-**TPU pods (connected by ICI) can get really big:** the maximum pod size (called a **superpod**) is `16x16x16` for TPU v4 and `16x20x28` for TPU v5p. These large pods are composed of reconfigurable cubes of `4x4x4` chips connected by [optical wraparound links](https://arxiv.org/pdf/2208.10041)<d-footnote>The optical switch is simply a reconfigurable connection with the same ICI bandwidth. It just lets us connect cubes while retaining a wraparound link.</d-footnote> that we can reconfigure to connect very large topologies.
+**(ICI로 연결된) TPU pod는 아주 거대해질 수 있습니다:** 최대 pod 크기(**superpod**이라고 함)는 TPU v4의 경우 `16x16x16`이고 TPU v5p의 경우 `16x20x28`입니다. 이러한 대규모 pod는 매우 큰 토폴로지를 연결하기 위해 재구성할 수 있는 [optical wraparound links](https://arxiv.org/pdf/2208.10041)<d-footnote>광학 스위치는 동일한 ICI 대역폭을 가진 재구성 가능한 연결일 뿐입니다. 이를 통해 랩어라운드 링크를 유지하면서 큐브를 연결할 수 있습니다.</d-footnote>로 연결된 `4x4x4` 칩의 재구성 가능한 큐브로 구성됩니다.
 
 {% include figure.liquid path="assets/img/tpu-rack.png" class="img-fluid" %}
 
