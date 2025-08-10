@@ -2,7 +2,7 @@
 layout: distill
 title: "How to Think About TPUs"
 # permalink: /main/
-description: "This section is all about how TPUs work, how they're networked together to enable multi-chip training and inference, and how this affects the performance of our favorite algorithms. There's even some good stuff for GPU users too!"
+description: "이 섹션에서는 TPU가 어떻게 작동하는지, 멀티칩 훈련 및 추론을 위해 어떻게 서로 연결되는지, 그리고 이가 우리가 즐겨 사용하는 알고리즘의 성능에 어떤 영향을 미치는지에 대해 자세히 다룹니다. GPU 사용자에게도 유용한 정보가 있습니다!"
 date: 2025-02-04
 future: true
 htmlwidgets: true
@@ -84,110 +84,114 @@ _styles: >
   }
 ---
 
-<p markdown=1 class="announce">You might also enjoy reading the new [Section 12](../gpus) on NVIDIA GPUs!</p>
+<p markdown=1 class="takeaway">
+<b>번역 안내:</b> 원저자([Jacob Austin](https://www.jacobaustin.org/))의 허락을 받아 원문을 번역 중입니다.<br> 
+해당 글의 1인칭은 원문 저자를 지칭합니다.<br> 
+원문: [How to Scale Your Model](https://jax-ml.github.io/scaling-book/)<br> 
+번역: [신종훈](https://www.linkedin.com/in/michael-shin-3522a6189/)</p>
 
 ## What Is a TPU?
 
-**A TPU is basically a compute core that specializes in matrix multiplication (called a TensorCore) attached to a stack of fast memory (called high-bandwidth memory or HBM)<d-cite key="tpu_paper"></d-cite>.** Here's a diagram:
+**TPU는 기본적으로 행렬 곱셈에 특화된 연산 코어(TensorCore)가 빠른 메모리 스택(고대역폭 메모리 또는 HBM)에 부착된 형태입니다<d-cite key="tpu_paper"></d-cite>.** 아래는 TPU의 다이어그램입니다:
 
-{% include figure.liquid path="assets/img/tpu-chip.png" class="img-fluid" caption="<b>Figure:</b> the basic components of a TPU chip. The TensorCore is the gray left-hand box, containing the matrix-multiply unit (MXU), vector unit (VPU), and vector memory (VMEM)." %}
+{% include figure.liquid path="assets/img/tpu-chip.png" class="img-fluid" caption="<b>Figure:</b> TPU 칩의 기본 구성 요소. TensorCore는 회색의 왼쪽 박스로, 행렬 곱셈 유닛(MXU), 벡터 유닛(VPU), 벡터 메모리(VMEM)를 포함합니다." %}
 
-You can think of the TensorCore as basically just being a really good matrix multiplication machine, but it has a few other functions worth noting. The TensorCore has three key units:
+TensorCore는 기본적으로 정말 뛰어난 행렬 곱셈 기계라고 생각할 수 있지만, 다른 주목할 만한 몇 가지 기능도 있습니다. TensorCore에는 세 가지 핵심 유닛이 있습니다:
 
-* The **MXU** (Matrix Multiply Unit) is the core of the TensorCore. For most TPU generations, it performs one `bfloat16[8,128] @ bf16[128,128] -> f32[8,128]` matrix multiply<d-footnote>TPU v6e (Trillium) has a 256x256 MXU, while all previous generations use 128x128</d-footnote> every 8 cycles using a systolic array (see <a href="#appendix-b-how-does-a-systolic-array-work">Appendix B</a> for details).
-  * This is about `5e13` bf16 FLOPs/s per MXU at 1.5GHz on TPU v5e. Most TensorCores have 2 or 4 MXUs, so e.g. the total bf16 FLOPs/s for TPU v5e is `2e14`.
-  * TPUs also support lower precision matmuls with higher throughput (e.g. each TPU v5e chip can do `4e14` int8 OPs/s).
+* **MXU** (Matrix Multiply Unit)는 TensorCore의 핵심입니다. 대부분의 TPU 세대에서, MXU는 시스톨릭 배열(systolic array)을 사용하여 8 사이클마다 `bfloat16[8,128] @ bf16[128,128] -> f32[8,128]` 행렬 곱셈<d-footnote>TPU v6e (Trillium)는 256x256 MXU를 사용하며, 이전 세대는 모두 128x128을 사용합니다.</d-footnote> 한 번 수행합니다 (<a href="#appendix-c-how-does-a-systolic-array-work">Appendix B</a> 참조).  
+  * 이는 TPU v5e에서 1.5GHz로 작동할 때 MXU당 약 `5e13` bf16 FLOPs/s에 해당합니다. 대부분의 TensorCore에는 2개 또는 4개의 MXU가 있으므로, 예를 들어 TPU v5e의 총 bf16 FLOPs/s는 `2e14`입니다.  
+  * TPU는 또한 더 높은 처리량을 가진 더 낮은 정밀도의 matmul도 지원합니다 (예: 각 TPU v5e 칩은 `4e14` int8 OPs/s를 수행할 수 있습니다).
 
-* The **VPU** (Vector Processing Unit) performs general mathematical operations like ReLU activations or pointwise addition or multiplication between vectors. Reductions (sums) are also performed here. <a href="#appendix-a-more-on-tpu-internals">Appendix A</a> provides more details.
-* **VMEM** (Vector Memory) is an on-chip scratchpad located in the TensorCore, close to the compute units. It is much smaller than HBM (for example, 128 MiB on TPU v5e) but has a much higher bandwidth to the MXU. VMEM operates somewhat like an L1/L2 cache on CPUs but is much larger and programmer-controlled. Data in HBM needs to be copied into VMEM before the TensorCore can do any computation with it.
+* **VPU** (Vector Processing Unit)는 ReLU 활성화나 벡터 간의 원소별 덧셈 또는 곱셈과 같은 일반적인 수학 연산을 수행합니다. Reduction(sums) 연산도 여기서 수행됩니다. 자세한 내용은 <a href="#appendix-a-more-on-tpu-internals">Appendix A</a> 에서 자세히 다룹니다. 
+* **VMEM** (Vector Memory)은 TensorCore 내부에 위치한 온칩(on-chip) 스크래치패드로, 연산 유닛에 근접해있습니다. HBM보다 훨씬 작지만(예: TPU v5e에서는 128MiB) MXU와의 대역폭은 훨씬 높습니다. VMEM은 CPU의 L1/L2 캐시와 꽤나 유사하게 작동하지만, 훨씬 크고 프로그래머가 제어(programmer-controlled)할 수 있습니다. HBM의 데이터는 TensorCore가 계산을 수행하기 전에 VMEM으로 복사되어야 합니다.
 
-**TPUs are very, very fast at matrix multiplication**. It's mainly what they do and they do it well. [TPU v5p](https://cloud.google.com/tpu/docs/v5p#system_architecture), one of the most powerful TPUs to date, can do `2.5e14` bf16 FLOPs / second / core or `5e14` bf16 FLOPs / sec / chip. A single pod of 8960 chips can do 4 exaflops / second. That's *a lot*. That's one of the most powerful supercomputers in the world. And Google has a lot of them.<d-footnote>TPUs, and their systolic arrays in particular, are such powerful hardware accelerators because matrix multiplication is one of the few algorithms that uses $O(n^3)$ compute for $O(n^2)$ bytes. That makes it very easy for an ordinary ALU to be bottlenecked by compute and not by memory bandwidth.</d-footnote>
+**TPU는 행렬 곱셈이 아주, 아주 빠릅니다**. 이는 TPU가 주로 하는 일이며, 성능 또한 뛰어납니다. 지금까지 가장 강력한 TPU 중 하나인 [TPU v5p](https://cloud.google.com/tpu/docs/v5p#system_architecture)는 코어당 초당 `2.5e14` bf16 FLOPs / second 또는 칩당 `5e14` bf16 FLOPs / second 을 수행할 수 있습니다. 8960개 칩으로 구성된 단일 pod는 초당 4 exaflops를 처리할 수 있습니다. 이는 *어마어마한* 양입니다. 이는 세계에서 가장 강력한 슈퍼컴퓨터 중 하나이며, 구글은 이를 다수 보유하고 있습니다.<d-footnote>TPU와 특히 이의 시스톨릭 배열(systolic arrays)이 이토록 강력한 하드웨어 가속기인 이유는, 행렬 곱셈이 $O(n^2)$ 바이트에 대해 $O(n^3)$의 연산을 사용하는 몇 안 되는 알고리즘 중 하나이기 때문입니다. 이로 인해 일반적인 ALU가 메모리 대역폭이 아닌 연산 자체에 의해 병목 현상을 겪기 매우 쉽습니다.</d-footnote>
 
-The diagram above also includes a few other components like SMEM and the scalar unit, which are used for control flow handling and are discussed briefly in <a href="#appendix-a-more-on-tpu-internals">Appendix A</a>, but aren't crucial to understand. On the other hand, HBM is important and fairly simple:
+위의 다이어그램에는 제어 흐름 처리(control flow handling)에 사용되는 SMEM 및 스칼라(scalar) 유닛과 같은 몇 가지 다른 구성 요소도 포함되어 있으며, 이는 <a href="#appendix-a-more-on-tpu-internals">Appendix A</a>에서 짧게 다루지만, 이해하는 데 필수적이지는 않습니다. 반면에 HBM은 중요하면서 또한 비교적 간단합니다:
 
-* **HBM** (High Bandwidth Memory) is a big chunk of fast memory that stores tensors for use by the TensorCore. HBM usually has capacity on the order of tens of gigabytes (for example, [TPU v5e has 16GiB of HBM](https://cloud.google.com/tpu/docs/v5e#system_architecture)).
+* **HBM** (High Bandwidth Memory) 은 TensorCore에서 사용할 텐서를 저장하는 큰 용량의 빠른 메모리입니다. HBM은 보통 수십 기가바이트의 용량을 가집니다(예를 들자면, [TPU v5e는 16GiB의 HBM을 가짐](https://cloud.google.com/tpu/docs/v5e#system_architecture)).
 
-  * When needed for a computation, tensors are streamed out of HBM through VMEM (see below) into the MXU and the result is written from VMEM back to HBM.
+  * 계산이 필요할 때, 텐서는 HBM에서 VMEM(아래 예제 있음)을 통해 스트리밍되어 MXU로 들어가고, 결과는 VMEM에서 다시 HBM으로 쓰입니다.
+  
+  * HBM과 TensorCore(VMEM을 통해) 간의 대역폭은 "HBM 대역폭” (보통 1-2TB/sec)이라 하며, 메모리 병목(memory-bound) 워크로드에서 계산이 얼마나 빨리 수행할 수 있는지의 제약 사항이 됩니다. 
 
-  * The bandwidth between HBM and the TensorCore (through VMEM) is known as "HBM bandwidth” (usually around 1-2TB/sec) and limits how fast computation can be done in memory-bound workloads.
+**보통 모든 TPU 연산은 파이프라인화되고 중첩됩니다.** matmul $X \cdot A \to Y$ 를 수행하기 위해, TPU는 먼저 HBM에서 $A$ 와 $X$ 행렬의 청크를 VMEM으로 복사한 다음, 이를 MXU로 로드하여 8x128($X$의 경우) 및 128x128($A$의 경우) 청크를 곱하고, 그 결과를 청크 단위로 다시 HBM에 복사합니다. 이를 효율적으로 수행하기 위해, matmul은 VMEM으로/에서 복사하는 작업이 MXU 작업과 중첩되도록 파이프라인화됩니다. 이를 통해 MXU는 메모리 전송을 기다리지 않고 계속 작동할 수 있으며, matmul이 메모리 병목이 아닌 연산 병목 상태를 유지하게 합니다.
 
-**Generally, all TPU operations are pipelined and overlapped.** To perform a matmul $X \cdot A \to Y$, a TPU would first need to copy chunks of matrices $A$ and $X$ from HBM into VMEM, then load them into the MXU which multiplies chunks of 8x128 (for $X$) and 128x128 (for $A$), then copy the result chunk by chunk back to HBM. To do this efficiently, the matmul is pipelined so the copies to/from VMEM are overlapped with the MXU work. This allows the MXU to continue working instead of waiting on memory transfers, keeping matmuls compute-bound, not memory-bound.
+다음은 HBM에서 원소별 곱셈(elementwise product)을 수행하는 방법의 예제입니다:
 
-Here's an example of how you might perform an elementwise product from HBM:
+{% include figure.liquid path="assets/img/pointwise-product.gif" caption="<b>Figure:</b> HBM에서 바이트를 로드하여 TPU에서 원소별 곱셈(pointwise product)을 수행하는 애니메이션. 바이트가 메모리에서 청크 단위로 스트리밍되고, 전체 배열이 구체화되기를 기다리지 않고 부분 결과가 파이프라인으로 다시 전송되는 방식을 주의 깊게 봐주세요." %}
 
-{% include figure.liquid path="assets/img/pointwise-product.gif" caption="<b>Figure:</b> an animation showing a pointwise product performed on TPU, with bytes loaded from HBM. Note how bytes are streamed out of memory in chunks and partial results are pipelined back without waiting for the full array to be materialized." %}
+matmul은 VPU/Vector Unit 대신 MXU로 로드되고, 동일한 가중치 청크가 여러 활성화 청크에 사용되므로 로드 및 저장 순서가 다르다는 점을 제외하면 거의 동일하게 보일 것입니다. 데이터 청크가 VMEM으로, 다음 VREG(vector registers)로, 다음 Vector Unit으로, 그리고 다시 VMEM과 HBM으로 스트리밍되는 것을 볼 수 있습니다. 곧 보게 되겠지만, HBM에서 VMEM으로의 로드가 Vector Unit(또는 MXU)의 FLOPs보다 느리면, VPU나 MXU에 작업이 공급되지 않아 "대역폭 병목" 상태가 됩니다.
 
-A matmul would look nearly identical except it would load into the MXU instead of the VPU/Vector unit, and the loads and stores would occur in a different order, since the same weight chunk is used for multiple chunks of activations. You can see chunks of data streaming into VMEM, then into the VREGs (vector registers), then into the Vector Unit, then back into VMEM and HBM. As we're about to see, if the load from HBM to VMEM is slower than the FLOPs in the Vector Unit (or MXU), we become "bandwidth bound” since we're starving the VPU or MXU of work.
+<p markdown=1 class="takeaway">**Key takeaway:** TPU는 아주 심플합니다. HBM에서 VMEM으로 가중치를 로드한 다음, VMEM에서 초당 약 200조 번의 multiply-adds 연산을 수행할 수 있는 시스톨릭 배열로 로드합니다. HBM $\leftrightarrow$ VMEM 그리고 VMEM $\leftrightarrow$ 시스톨릭 배열 대역폭은 TPU가 효율적으로 수행할 수 있는 계산에 대한 근본적인 한계를 설정합니다.</p>
 
-<p markdown=1 class="takeaway">**Key takeaway:** TPUs are very simple. They load weights from HBM into VMEM, then from VMEM into a systolic array which can perform around 200 trillion multiply-adds per second. The HBM $\leftrightarrow$ VMEM and VMEM $\leftrightarrow$ systolic array bandwidths set fundamental limits on what computations TPUs can do efficiently.</p>
+**VMEM과 arithmetic intensity:** VMEM은 HBM보다 훨씬 작지만 MXU로의 대역폭은 훨씬 높습니다. [섹션 1](../roofline)에서 보았듯이, 이는 알고리즘의 모든 입력/출력을 VMEM에 맞출 수 있다면 통신 병목에 부딪힐 가능성이 훨씬 작아진다는 것을 의미합니다. 이는 계산의 arithmetic intensity가 낮을 때 특히 유용합니다: 
 
-**VMEM and arithmetic intensity:** VMEM is much smaller than HBM but it has a much higher bandwidth to the MXU. As we saw in [Section 1](../roofline), this means if an algorithm can fit all its inputs/outputs in VMEM, it's much less likely to hit communication bottlenecks. This is particularly helpful when a computation has poor arithmetic intensity: VMEM bandwidth is around 22x higher than HBM bandwidth which means an MXU operation reading from/writing to VMEM requires an arithmetic intensity of only 10-20 to achieve peak FLOPs utilization. That means if we can fit our weights into VMEM instead of HBM, our matrix multiplications can be FLOPs bound at much smaller batch sizes. And it means algorithms that fundamentally have a lower arithmetic intensity can still be efficient. VMEM is just so small this is often a challenge.<d-footnote>We sometimes talk about VMEM prefetching, which refers to loading weights ahead of time in VMEM so we can mask the cost of loading for our matmuls. For instance, in a normal Transformer we can sometimes load our big feed-forward weights into VMEM during attention, which can hide the cost of the weight load if we're memory bandwidth bound. This requires our weights to be small enough or sharded enough to fit a single layer into VMEM with space to spare.</d-footnote>
+VMEM 대역폭은 HBM 대역폭보다 약 22배 높으므로, VMEM에서 읽고 쓰는 MXU 연산은 최대 FLOPs 활용도를 달성하기 위해 10-20의 arithmetic intensity만 필요합니다. 즉, 가중치를 HBM 대신 VMEM에 맞출 수 있다면, 훨씬 작은 배치 크기에서도 행렬 곱셈이 FLOPs 병목 상태가 될 수 있습니다. 그리고 근본적으로 낮은 arithmetic intensity를 가진 알고리즘도 여전히 효율적일 수 있다는 의미입니다. 다만 VMEM이 너무 작아서 이것이 종종 어려운 과제가 됩니다.<d-footnote>우리는 때때로 VMEM 프리페칭(prefetching)에 대해 이야기하는데, 이는 matmul에 대한 로딩 비용을 가리기 위해 VMEM에 가중치를 미리 로드하는 것을 의미합니다. 예를 들어, 일반적인 Transformer에서 어텐션 중에 큰 피드포워드 가중치를 VMEM으로 로드하여, 메모리 대역폭 병목 상태일 경우 가중치 로드 비용을 숨길 수 있습니다. 이를 위해서는 가중치가 충분히 작거나, 단일 레이어를 VMEM에 넣고도 공간이 남을 만큼 충분히 샤딩되어야 합니다.</d-footnote>
 
 {% include figure.liquid path="assets/img/tpu-bandwidth.png" class="img-fluid" %}
 
-**A TPU chip typically (but not always) consists of two TPU cores which share memory and can be thought of as one large accelerator** with twice the FLOPs (known as a "megacore" configuration). This has been true since TPU v4. Older TPU chips have separate memory and are regarded as two separate accelerators (TPU v3 and older). Inference-optimized chips like the TPU v5e only have one TPU core per chip.
+**TPU 칩은 일반적으로(항상 그런 것은 아니지만) 메모리를 공유하는 두 개의 TPU 코어로 구성되며, 두 배의 FLOPs를 가진 하나의 큰 가속기("메가코어(megacore)" 구성)로 간주될 수 있습니다.** TPU v4 이후로는 이렇게 구성되어 있습니다. 구형 TPU 칩(TPU v3 및 이전)은 메모리가 분리되어 있으며 두 개의 별도 가속기로 간주됩니다. TPU v5e와 같은 추론에 최적화된 칩은 칩당 하나의 TPU 코어만 가지고 있습니다.
 
 {% include figure.liquid path="assets/img/cores.png" class="img-fluid img-small" %}
 
-**Chips** are arranged in **sets of 4 on a ‘tray'** connected to a **CPU host via PCIe network.**  This is the format most readers will be familiar with, 4 chips (8 cores, though usually treated as 4 logical megacores) exposed through Colab or a single TPU-VM. For inference chips like the TPU v5e, we have 2 trays per host, instead of 1, but also only 1 core per chip, giving us 8 chips = 8 cores.<d-footnote>On Cloud TPU VMs, each tray is exposed as part of a separate VM, so there are once again 4 cores visible.</d-footnote>
+**칩**은 **'트레이(tray)' 위에 4개 세트**로 배열되어 **PCIe 네트워크를 통해 CPU 호스트에 연결**됩니다. Colab이나 단일 TPU-VM을 통해 4개의 칩(8개 코어지만, 보통 4개의 논리적 메가코어로 취급됨)이 노출되는 이 형식이 대부분의 독자에게 익숙할 것입니다. TPU v5e와 같은 추론 칩의 경우, 호스트당 1개가 아닌 2개의 트레이가 있지만, 칩당 코어는 1개뿐이므로 8개 칩 = 8개 코어가 됩니다.<d-footnote>Cloud TPU VM에서는 각 트레이가 별도의 VM의 일부로 노출되므로, 다시 4개의 코어만 보입니다.</d-footnote>
 
 {% include figure.liquid path="assets/img/pcie.png" class="img-fluid" %}
 
-**PCIe bandwidth is limited:** Like the HBM $\leftrightarrow$ VMEM link, the CPU $\leftrightarrow$ HBM PCIe connection has a specific bandwidth that limits how quickly you can load from host memory to HBM or vice-versa. PCIe bandwidth for TPU v4 is 16GB / second each way, for example, so close to 100x slower than HBM. We *can* load/offload data into the host (CPU) RAM, but not very quickly.
+**PCIe 대역폭은 제한적입니다:** HBM $\leftrightarrow$ VMEM 링크와 마찬가지로, CPU $\leftrightarrow$ HBM PCIe 연결은 호스트 메모리에서 HBM으로 또는 그 반대로 얼마나 빨리 로드할 수 있는지를 제한하는 특정 대역폭을 가집니다. 예를 들어, TPU v4의 PCIe 대역폭은 각 방향으로 초당 16GB이므로, HBM보다 거의 100배 느립니다. 우리는 호스트(CPU) RAM으로 데이터를 로드/오프로드할 수 *있지만*, 그다지 빠르지는 않습니다.
 
 ## TPU Networking
 
-**Chips are connected to each other through the ICI network in a Pod**. In older generations (TPU v2 and TPU v3), inference chips (e.g., TPU v5e), and Trilium (TPU v6e), ICI ("inter-chip interconnects”) connects the 4 nearest neighbors (with edge links to form a 2D torus). TPU v4 and TPU v5p are connected to the nearest 6 neighbors (forming a 3D torus). Note these connections do **not** go through their hosts, they are direct links between chips.
+**칩은 Pod 내에서 ICI 네트워크를 통해 서로 연결됩니다.** 구형 세대(TPU v2 및 TPU v3), 추론 칩(예: TPU v5e), 그리고 Trilium (TPU v6e)에서, ICI("inter-chip interconnects")는 가장 가까운 4개의 이웃을 연결합니다(edge 링크로 2D torus를 형성함). TPU v4와 TPU v5p는 가장 가까운 6개의 이웃에 연결됩니다(3D torus를 형성함). 이러한 연결은 호스트를 통하지 **않고**, 칩 간의 직접적인 링크라는 점에 유의하세요.
 
 {% include figure.liquid path="assets/img/ici-wraparound.png" class="img-fluid img-small" %}
 
-The toroidal structure reduces the maximum distance between any two nodes from $N$ to $N / 2$, making communication much faster. TPUs also have a "twisted torus” configuration that wraps the torus in a Mobius-strip like topology to further reduce the average distance between nodes.
+토로이드(toroidal) 구조는 임의의 두 노드 간의 최대 거리를 $N$ 에서 $N / 2$ 로 줄여 통신을 훨씬 빠르게 만듭니다. TPU는 또한 노드 간의 평균 거리를 더욱 줄이기 위해 뫼비우스의 띠와 같은 토폴로지로 토러스를 감싸는 "트위스티드 토러스(twisted torus)" 구성을 가지고 있습니다.
 
-**TPU pods (connected by ICI) can get really big:** the maximum pod size (called a **superpod**) is `16x16x16` for TPU v4 and `16x20x28` for TPU v5p. These large pods are composed of reconfigurable cubes of `4x4x4` chips connected by [optical wraparound links](https://arxiv.org/pdf/2208.10041)<d-footnote>The optical switch is simply a reconfigurable connection with the same ICI bandwidth. It just lets us connect cubes while retaining a wraparound link.</d-footnote> that we can reconfigure to connect very large topologies.
+**TPU pod(ICI로 연결된)는 엄청 커질 수 있습니다:** 최대 pod 크기(**superpod**이라고 함)는 TPU v4의 경우 `16x16x16`이고 TPU v5p의 경우 `16x20x28`입니다. 이러한 대규모 pod는 매우 큰 토폴로지를 연결하기 위해 재구성할 수 있는 [optical wraparound links](https://arxiv.org/pdf/2208.10041)<d-footnote>광학 스위치는 동일한 ICI 대역폭을 가진 재구성 가능한 연결일 뿐입니다. 이를 통해 랩어라운드 링크를 유지하면서 큐브를 연결할 수 있습니다.</d-footnote>로 연결된 `4x4x4` 칩의 재구성 가능한 큐브로 구성됩니다.
 
 {% include figure.liquid path="assets/img/tpu-rack.png" class="img-fluid" %}
 
-Smaller topologies (e.g. `2x2x1`, `2x2x2`) can also be requested, albeit with no wraparounds. This is an important caveat, since it typically doubles the time of most communication. Any multiple of a full cube (e.g. `4x4x4` or `4x4x8`) will have wraparounds provided by the optical switches.<d-footnote>Note that a `2x2x4` won't have any wraparounds since they are provided by the optical switches which are only available on a full cube. A TPU v5e 8x16 _will_ have a wraparound on the longer axis, however, since it doesn't use reconfigurable optical networking.</d-footnote>
+더 작은 토폴로지(예: `2x2x1`, `2x2x2`)도 요청할 수 있지만, 랩어라운드(wraparound)는 제공되지 않습니다. 이는 대부분의 통신 시간을 일반적으로 두 배로 만들기 때문에 중요한 주의 사항입니다. 풀 큐브(full cube)의 배수(예: `4x4x4` 또는 `4x4x8`)는 광학 스위치에 의해 제공되는 랩어라운드를 가집니다.<d-footnote>`2x2x4` 토폴로지에는 랩어라운드가 없습니다. 랩어라운드는 풀 큐브에서만 사용 가능한 광학 스위치로 제공되기 때문입니다. 하지만 TPU v5e 8x16은 재구성 가능한 광학 네트워킹(reconfigurable optical networking)을 사용하지 않으므로, 긴 축에는 랩어라운드가 있습니다.</d-footnote>
 
 {% include figure.liquid path="assets/img/subslices.png" class="img-fluid" %}
 
-TPU v5e and Trillium pods consist of a single `16x16` 2D torus with wraparounds along any axis of size 16 (meaning an `8x16` has a wraparound on the long axis). TPUs v5e and v6e (Trillium) cannot expand beyond a 16x16 torus but pods can still communicate with each other over standard data-center networking (DCN), which connects TPU hosts to each other. Again, smaller topologies can be requested without wraps on dims $<16$.
+TPU v5e와 Trillium pod는 크기가 16인 축을 따라 랩어라운드가 있는 단일 `16x16` 2D 토러스로 구성됩니다(즉, `8x16`은 긴 축에 랩어라운드가 있음). TPU v5e와 v6e(Trillium)는 16x16 토러스를 넘어 확장할 수 없지만, pod들은 TPU 호스트를 서로 연결하는 표준 데이터센터 네트워킹(DCN)을 통해 여전히 서로 통신할 수 있습니다. 다시 말하지만, 16 미만($<16$)의 차원에는 랩어라운드 없이 더 작은 토폴로지를 요청할 수 있습니다.
 
 {% include figure.liquid path="assets/img/more-subslices.png" class="img-fluid" %}
 
-**This nearest-neighbor connectivity is a key difference between TPUs and GPUs**. GPUs are connected with a hierarchy of switches that approximate a point-to-point connection between every GPU, rather than using local connections like a TPU. Typically, GPUs within a node (8 GPUs for H100 or as many as 72 for B200 NVL72) are directly connected, while larger topologies require O(log(N)) hops between each GPU. On the one hand, that means GPUs can send arbitrary data within a small number of hops. On the other hand, TPUs are dramatically cheaper (since NVLink switches are expensive), simpler to wire together, and can scale to much larger topologies because the number of links per device and the bandwidth per device is constant. Read more [here](../gpus#networking).
+**최근접 이웃(nearest-neighbor) 연결성은 TPU와 GPU의 핵심적인 차이점입니다.** TPU처럼 로컬 연결을 사용하는 대신, GPU는 모든 GPU 간의 점대점(point-to-point) 연결을 근사화하는 계층적 스위치로 연결됩니다. 일반적으로 노드 내의 GPU(H100의 경우 8개, B200의 경우 최대 500개)는 직접 연결되지만, 더 큰 토폴로지에서는 각 GPU 간에 O(log(N)) 홉이 필요합니다. 한편으로는, 이는 GPU가 노드 내에서 임의의 데이터를 단일 저지연 홉(low-latency hop)으로 보낼 수 있음을 의미합니다. 다른 한편으로는, TPU가 훨씬 저렴하고(NVLink 스위치는 비쌉니다) 함께 연결하기가 더 간단하며, 장치당 링크 수와 장치당 대역폭이 일정하기 때문에 훨씬 더 큰 토폴로지로 확장할 수 있습니다.
 
-**ICI is very fast relative to DCN, but is still slower than HBM bandwidth.** For instance, a [TPU v5p](https://cloud.google.com/tpu/docs/v5p#system_architecture) has:
+**ICI는 DCN에 비해 매우 빠르지만, HBM 대역폭보다는 여전히 느립니다.** 예를 들어, [TPU v5p](https://cloud.google.com/tpu/docs/v5p#system_architecture)는 :
 
-* `2.5e12` bytes/s (2.5 TB/s) of HBM bandwidth per chip.
-* `9e10` bytes/s (90 GB/s) of ICI bandwidth per axis, with 3 axes per chip.<d-footnote>The page above lists 100 GB/s of bandwidth, which is slightly different from what's listed here. TPU ICI links have slightly different bandwidths depending on the operation being performed. You can generally use the numbers in this doc without worry.</d-footnote>
-* `6.25e9` bytes/s (6.25 GB/s) of DCN (egress) bandwidth per TPU (via 1-2 NICs on each host).<d-footnote>TPU v6e has 12.5e9 bytes/s and v5e has 3.125e9 bytes/s.</d-footnote>
+* 칩당 `2.5e12` bytes/s (2.5 TB/s)의 HBM 대역폭.
+* 축당(칩당 3개 축) `9e10` bytes/s (90<d-footnote>위의 페이지에는 100 GB/s의 대역폭이라고 적혀있어, 글에서 명시된 것과 조금 다릅니다. TPU ICI 링크는 수행되는 연산에 따라 대역폭이 약간 다르기에 전반적으로 이 문서의 수치를 우려 없이 사용하셔도 됩니다.</d-footnote> GB/s)의 ICI 대역폭.
+* 호스트당 `2.5e10` bytes/s (25 GB/s) of DCN (egress) 대역폭. 일반적으로 호스트당 8개의 TPU가 있으므로, 이는 실제로는 `3.1e9` bytes / s / chip에 가깝습니다.
 
-This means that when we split models across multiple chips, we need to be careful to avoid bottlenecking the MXU with slower cross-device communication.
+이는 모델을 여러 칩에 분산시킬 때, 더 느린 장치 간 통신으로 MXU에 병목이 생기지 않도록 주의해야 함을 의미합니다.
 
-**Multi-slice training:** A set of ICI-connected TPUs is called a **slice**. Different slices can be connected between each other using DCN, for instance to link slices on different pods. Since DCN is a much slower connection than ICI, one should try to limit how much our computation has to wait for data from DCN. DCN is host-to-host, so to transfer buffers from TPU to TPU over DCN, we first need to transfer over PCIe to the host, then egress over the network, then ingress over the target host network, then over PCIe into HBM.
+**Multi-slice training:** ICI로 연결된 TPU 세트를 **slice** 라고 합니다. 각각의 슬라이스들은 DCN을 사용하여 서로 연결될 수 있는데, 예를 들어 다른 pod에 있는 슬라이스들을 연결하는 경우입니다. DCN은 ICI보다 훨씬 느린 연결이므로, 계산이 DCN 데이터 때문에 지연되는 시간을 최소화해야 합니다. DCN은 호스트 대 호스트(host-to-host)이므로, DCN을 통해 TPU에서 TPU로 버퍼를 전송하려면 먼저 PCIe를 통해 호스트로 전송한 다음, 네트워크를 통해 송신하고, 대상 호스트 네트워크를 통해 수신한 다음, PCIe를 통해 HBM으로 전송해야 합니다.
 
 ## Key Takeaways
 
-* TPUs are simple and can in most cases be thought of as a matrix multiply unit connected to memory (super fast), other chips over ICI (rather fast), and the rest of the datacenter over DCN (somewhat fast).
+* TPU는 간단하며, 대부분의 경우 메모리(매우 빠름), ICI를 통해 다른 칩(상당히 빠름), DCN을 통해 데이터센터의 나머지 부분(어느 정도 빠름)에 연결된 행렬 곱셈 유닛으로 생각할 수 있습니다.
 
-* Communication is limited by our various network bandwidths in order of speed:
-  * HBM bandwidth: Between a TensorCore and its associated HBM.
-  * ICI bandwidth: Between a TPU chip and its nearest 4 or 6 neighbors.
-  * PCIe bandwidth: Between a CPU host and its associated tray(s) of chips.
-  * DCN bandwidth: Between multiple CPU hosts, typically hosts not connected by ICI.
+* 통신은 속도 순서대로 다양한 네트워크 대역폭에 의해 제한됩니다:
+  * HBM 대역폭: TensorCore와 관련 HBM 사이.
+  * ICI 대역폭: TPU 칩과 가장 가까운 4개 또는 6개의 이웃 사이.
+  * PCIe 대역폭: CPU 호스트와 관련 칩 트레이(들) 사이.
+  * DCN 대역폭: 여러 CPU 호스트 사이, 일반적으로 ICI로 연결되지 않은 호스트.
 
-* **Within a slice, TPUs are only connected to their nearest neighbors via ICI.** This means communication over ICI between distant chips in a slice needs to hop over the intervening chips first.
+* **슬라이스 내에서, TPU는 ICI를 통해 가장 가까운 이웃(nearest neighbors)에만 연결됩니다.** 이는 슬라이스 내의 멀리 떨어진 칩 간의 ICI 통신은 먼저 중간(intervening) 칩을 거쳐야 함을 의미합니다.
 
-* **Weight matrices need to be padded to at least size 128** (256 on TPU v6) in both dimensions to fill up the MXU (in fact, smaller axes are padded to 128).
+* **가중치 행렬은 MXU를 완전히 채우기 위해 양쪽 차원 모두 최소 128(TPU v6의 경우 256)의 크기로 패딩되어야 합니다** (실제로 더 작은 축은 128로 패딩됩니다).
 
-* **Lower precision matrix multiplication tends to be faster.** TPUs can do int8 or int4 FLOPs roughly 2x/4x faster than bfloat16 FLOPs for generations that support it. VPU operations are still performed in fp32.
+* **낮은 정밀도의 행렬 곱셈이 더 빠른 경향이 있습니다.** TPU는 이를 지원하는 세대에서 bfloat16 FLOPs보다 약 2배/4배 빠른 int8 또는 int4 FLOPs를 수행할 수 있습니다. VPU 연산은 여전히 fp32에서 수행됩니다.
 
-* To avoid bottlenecking the TPU compute unit, we need to **make sure the amount of communication across each channel is proportional to its speed**.
+* TPU 연산 유닛에 병목이 생기는 것을 피하기 위해, **각 채널을 통한 통신량이 그 속도에 비례하도록 해야 합니다**.
 
-### TPU Specs
-
-Here are some specific numbers for our chips:
+* **다음은 우리 칩에 대한 몇 가지 구체적인 수치입니다:**
 
 | Model                                      | Pod size | Host size | HBM capacity/chip | HBM BW/chip (bytes/s) | FLOPs/s/chip (bf16) | FLOPs/s/chip (int8) |
 | :----------------------------------------- | :------: | :-------: | :---------------: | :-------------------: | :-----------------: | :-----------------: |
@@ -197,7 +201,7 @@ Here are some specific numbers for our chips:
 | <span class="nowrap-header">TPU v5e</span> |  16x16   |    4x2    |       16GB        |        8.1e11         |       1.97e14       |       3.94e14       |
 | <span class="nowrap-header">TPU v6e</span> |  16x16   |    4x2    |       32GB        |        1.6e12         |       9.20e14       |       1.84e15       |
 
-Host size refers to the topology of TPUs connected to a single host (e.g. TPU v5e has a single CPU host connected to 8 TPUs in a 4x2 topology). Here are interconnect figures:
+호스트 크기는 단일 호스트에 연결된 TPU의 토폴로지를 나타냅니다(예: TPU v5e는 4x2 토폴로지의 8개 TPU에 연결된 단일 CPU 호스트를 가짐). 다음은 interconnect 수치입니다:
 
 | Model       | ICI BW/link (one-way, bytes/s) | ICI BW/link (bidi, bytes/s) |
 | :---------- | :----------------------------: | :-------------------------: |
@@ -207,168 +211,198 @@ Host size refers to the topology of TPUs connected to a single host (e.g. TPU v5
 | **TPU v5e** |             4.5e10             |            9e10             |
 | **TPU v6e** |              9e10              |           1.8e11            |
 
-We include both one-way (unidirectional) bandwidth and bidi (bidirectional) bandwidth since unidirectional bandwidth is more true to the hardware but bidirectional bandwidth occurs more often in equations involving a full ring.<d-footnote>By bidi (bidirectional) bandwidth we mean the total bytes that can be sent along a single link in both directions, or equally, the total number of outgoing bytes from a single TPU along a particular axis, assuming we can use both links efficiently. This is true when we have a functioning ring, AKA when we have a wraparound connection on the particular axis. This occurs on inference chips when we have a full 16 axis, or on training chips (v*p) when we have an axis which is a multiple of 4. We prefer to use the bidirectional bandwidth because it appears frequently in calculations involving bidirectional comms.</d-footnote>
+단방향(unidirectional) 대역폭이 하드웨어에 더 충실하지만, 완전한 링(full ring)을 포함하는 상황에서는 양방향(bidirectional) 대역폭이 더 자주 등장하므로 두 가지를 모두 포함합니다.<d-footnote>양방향(bidirectional) 대역폭이란 단일 링크를 따라 양방향으로 전송될 수 있는 총 바이트 수, 또는 동등하게, 두 링크를 효율적으로 사용할 수 있다고 가정할 때 특정 축을 따라 단일 TPU에서 나가는 총 바이트 수를 의미합니다. 이는 작동하는 링(functioning ring), 즉 특정 축에 랩어라운드(wraparound) 연결이 있을 때 해당됩니다. 이는 추론 칩에서 전체 16개 축이 있을 때, 또는 훈련 칩(v*p)에서 축이 4의 배수일 때 발생합니다. 양방향 통신을 포함하는 계산에 자주 등장하기 때문에 양방향 대역폭을 사용하는 것을 선호합니다.</d-footnote>
 
-PCIe bandwidth is typically around `1.6e10` bytes / second per TPU (`3.2e10` for TPU v6e), while DCN bandwidth is typically around `6.25e9` bytes / second per TPU (`12.5e9` for TPU v6e and `3.125e9` for TPU v5e).
+PCIe 대역폭은 일반적으로 칩당 `1.5e10` bytes / second 정도이며<d-footnote>Trillium (TPU v6e)는 32GB/s로, v5보다 약 2배 높습니다.</d-footnote>, DCN 대역폭은 일반적으로 호스트당 `2.5e10` bytes / second 정도입니다. 완전성을 위해 단방향 및 양방향 대역폭을 모두 포함합니다. 일반적으로 완전한 랩어라운드 링에 접근할 수 있을 때 양방향 대역폭이 더 유용한 수치이며, 단방향 대역폭은 하드웨어에 더 충실합니다.
 
 ## Worked Problems
 
-These numbers are a little dry, but they let you make basic roofline estimates for model performance. Let's work a few problems to explain why this is useful. You'll see more examples in Part 3.
+이 숫자들은 약간 지루하지만, 모델 성능에 대한 기본적인 루프라인 추정을 가능하게 합니다. 이것이 왜 유용한지 설명하기 위해 몇 가지 문제를 풀어보겠습니다. 파트 3에서 더 많은 예시를 볼 수 있습니다.
 
-**Question 1 [bounding LLM latency]:** Say you want to sample from a 200B parameter model in bf16 that's split across 32 TPU v4p. How long would it take to load all the parameters from HBM into the systolic array? *Hint: use the numbers above.*
+**문제 1 [bounding LLM latency]:** 32개의 TPU v4p에 분산된 bf16의 200B 파라미터 모델에서 샘플링하고 싶다고 가정해 봅시다. HBM에서 시스톨릭 배열로 모든 파라미터를 로드하는 데 얼마나 걸릴까요? *힌트: 위의 수치를 사용하세요.*
 
-{% details Click here for the answer. %}
+{% details 답을 보려면 여기를 클릭하세요. %}
 
-**Answer:** We're loading `sizeof(bf16) * 200e9 = 400e9` bytes on 32 chips, meaning 12.5e9 bytes / chip, each with an HBM bandwidth of 1.23e12. So the load takes around 10ms.
+**답:** 32개 칩에 `sizeof(bf16) * 200e9 = 400e9` 바이트를 로드하고 있으므로, 칩당 12.5e9 바이트이며, 각 칩의 HBM 대역폭은 1.23e12입니다. 따라서 로드에는 약 10ms가 걸립니다.
 
-That's pretty cool, because *that's a reasonable lower bound on the latency of sampling* from the model. Each sampling step needs to load all parameters from HBM, so it cannot take less than 10 ms. In practice, at small batch sizes, this is close to being achievable.
-
-{% enddetails %}
-
-**Question 2 [TPU details]:** Consider a full TPU v5e pod. How many total CPU hosts are there? How many TPU TensorCores? What is the total FLOPs/s for the whole pod? What is the total HBM? Do the same exercise for TPU v5p pod.
-
-{% details Click here for the answer. %}
-
-**Answer:** For TPU v5e, each pod is `16x16` and each host is a 4x2 slice, so we have `16*16 / 8 = 32` hosts. For TPU v5e, each TPU has only one core, so we have 256 TensorCores. The total FLOPs/s is `16*16*2e14 = 5.1e16` in bfloat16. Each chip has 16GB of HBM, so that's `256 * 16 = 4TB` of memory.
-
-For a full TPU v5p pod, we have `16x20x28` chips and each host is 2x2x1, so we have `16*20*28 / 2*2 = 2,240` hosts. For TPU v5p, each TPU has two TensorCores, so we have `8960 * 2 = 17,920` cores. The total FLOPs/s is `8960 * 4.5e14 = 4e18` in bfloat16. Each chip has 96GB of HBM, so that's `8960 * 96 = 860TB` of memory.
+꽤 멋지죠, 왜냐하면 *이것이 모델에서 샘플링하는 지연 시간의 합리적인 하한*이기 때문입니다. 각 샘플링 단계는 HBM에서 모든 파라미터를 로드해야 하므로 10ms보다 적게 걸릴 수 없습니다. 실제로, 작은 배치 크기에서는 이 값에 가깝게 달성할 수 있습니다.
 
 {% enddetails %}
 
-**Question 3 [PCIe operational intensity]:** Imagine we're forced to store a big weight matrix $A$ of type $\text{bfloat16}[D, F]$, and a batch of activations $x$ of type $\text{bfloat16}[B, D]$ in host DRAM and want to do a matrix multiplication on them. This is running on a single host, and we're using a single TPU v6e chip attached to it. You can assume $B \ll D$, and $F = 4D$ (we'll see in future chapters why these are reasonable assumptions). What is the smallest batch size $B$ we need to remain FLOPs bound over PCIe? Assume PCIe bandwidth of 1.5e10 bytes / second.
+**문제 2 [TPU details]:** 완전한 TPU v5e pod를 고려해 봅시다. 총 CPU 호스트는 몇 개입니까? TPU TensorCore는 몇 개입니까? 전체 pod의 총 FLOPs/s는 얼마입니까? 총 HBM은 얼마입니까? TPU v5p pod에 대해서도 동일한 연습을 해보세요.
 
-{% details Click here for the answer. %}
+{% details 답을 보려면 여기를 클릭하세요. %}
 
-**Answer:** We have to perform $2BDF$ floating point operations, and each chip can perform `9.2e14` floating point operations per second. This then requires $2BDF / 9.2e14$ seconds to perform. We have to load $2DF + 2BD$ bytes from DRAM, and write $2BF$ bytes back to it. We are bottlenecked by PCIe transfer speeds, so we need $2 \cdot (BD + DF + BF) / 1.5e10$ seconds to transfer data to and from the TPU. Since we want computation to take longer than weight loading, assuming we can overlap all weight loading with computation, we want $2BDF / 9.2e14 > 2 \cdot (BD + DF + BF) / 1.5e10$. We can simplify this using our assumptions that $B \ll D$, and $F = 4D$, to get
+**답:** TPU v5e의 경우, 각 pod는 `16x16`이고 각 호스트는 4x2 슬라이스이므로, `16*16 / 8 = 32`개의 호스트가 있습니다. TPU v5e의 경우, 각 TPU는 하나의 코어만 가지고 있으므로, 256개의 TensorCore가 있습니다. 총 FLOPs/s는 bfloat16에서 `16*16*2e14 = 5.1e16`입니다. 각 칩은 16GB의 HBM을 가지고 있으므로, 총 메모리는 `256 * 16 = 4TB`입니다.
+
+완전한 TPU v5p pod의 경우, `16x20x28`개의 칩이 있고 각 호스트는 2x2x1이므로, `16*20*28 / 2*2 = 2,240`개의 호스트가 있습니다. TPU v5p의 경우, 각 TPU는 두 개의 TensorCore를 가지고 있으므로, `8960 * 2 = 17,920`개의 코어가 있습니다. 총 FLOPs/s는 bfloat16에서 `8960 * 4.5e14 = 4e18`입니다. 각 칩은 96GB의 HBM을 가지고 있으므로, 총 메모리는 `8960 * 96 = 860TB`입니다.
+
+{% enddetails %}
+
+**문제 3 [PCIe operational intensity]:** $\text{bfloat16}[D, F]$ 타입의 큰 가중치 행렬 $A$와 $\text{bfloat16}[B, D]$ 타입의 활성화 배치 $x$를 호스트 DRAM에 저장하고, 이에 대한 행렬 곱셈을 수행해야 한다고 상상해 봅시다. 이는 단일 호스트에서 실행되며, 여기에 연결된 단일 TPU v6e 칩을 사용합니다. $B \\ll D$이고 $F = 4D$라고 가정할 수 있습니다(이러한 가정이 왜 합리적인지는 향후 챕터에서 확인해볼 수 있습니다). PCIe를 통해 FLOPs 병목 상태를 유지하기 위해 필요한 가장 작은 배치 크기 $B$는 얼마입니까? PCIe 대역폭을 초당 1.5e10 바이트로 가정합니다.
+
+{% details 답을 보려면 여기를 클릭하세요. %}
+
+**답:** $2BDF$개의 부동소수점 연산을 수행해야 하며, 각 칩은 초당 `9.2e14`개의 부동소수점 연산을 수행할 수 있습니다. 따라서 이를 수행하는 데 $2BDF / 9.2e14$초가 걸립니다. DRAM에서 $2DF + 2BD$ 바이트를 로드하고, $2BF$ 바이트를 다시 써야 합니다. PCIe 전송 속도에 의해 병목이 발생하므로, TPU로/에서 데이터를 전송하는 데 $2 \cdot (BD + DF + BF) / 1.5e10$초가 필요합니다. 
+모든 가중치 로딩을 계산과 중첩시킬 수 있다고 가정할 때, 계산이 가중치 로딩보다 오래 걸리게 하려면 다음 부등식이 성립해야 합니다: $2BDF / 9.2e14 > 2 \cdot (BD + DF + BF) / 1.5e10$ . $B \ll D$이고 $F = 4D$라는 가정을 사용하여 이를 단순화하면 다음과 같습니다.
 
 $$\frac{8BD^2}{9.2 \times 10^{14}} > \frac{8D^2}{1.5 \times 10^{10}}$$
 
-or
+또는
 
 $$B > \frac{9.2 \times 10^{14}}{1.5 \times 10^{10}} \simeq 61{,}000$$
 
 {% enddetails %}
 
-**Question 4 [general matmul latency]:** Let's say we want to multiply a weight matrix int8[16384, 4096] by an activation matrix of size int8[B, 4096] where B is some unknown batch size. Let's say we're on 1 TPUv5e to start.
+**문제 4 [general matmul latency]:** 가중치 행렬 int8[16384, 4096]을 알 수 없는 배치 크기 B를 가진 활성화 행렬 int8[B, 4096]과 곱하고 싶다고 가정해 봅시다. 먼저 1개의 TPUv5e에서 실행한다고 가정합니다.
 
-1. How long will this multiplication take as a function of B? *Hint: it may help to calculate how long it will take to load the arrays from HBM and how long the multiplication will actually take. Which is bottlenecking you?*
-2. What if we wanted to run this operation out of VMEM? How long would it take as a function of B?
+1. 이 곱셈은 B의 함수로서 얼마나 오래 걸릴까요? *Hint: 배열을 HBM에서 로드하는 데 걸리는 시간과 곱셈이 실제로 걸리는 시간을 계산하는 것이 도움이 될 수 있습니다. 어느 쪽이 병목입니까?* 
+2. 이 연산을 VMEM에서 실행하고 싶다면 어떨까요? B의 함수로서 얼마나 오래 걸릴까요?
 
-{% details Click here for the answer. %}
+{% details 답을 보려면 여기를 클릭하세요. %}
 
-**Answer:** (1) The number of floating point operations we need to perform is $2 \cdot 4096 \cdot 16384 \cdot B = 1.3 \times 10^{8} \cdot B$. So $T_{\text{math}} = (1.3 \times 10^{8} \cdot B) / 3.94 \times 10^{14}$ seconds. We need to load $16384 \cdot 4096 + 4096 \cdot B$ bytes from HBM to VMEM, and write back $16384 \cdot B$ bytes from VMEM to HBM. This means $T_{\text{comms}} = (6.7 \times 10^{7} + 2 \times 10^{4} \cdot B) / 8.1 \times 10^{11}$ seconds. Assuming as much overlap of communication and computation as possible, the whole multiplication will take approximately
+**답:** (1) 수행해야 하는 부동소수점 연산의 수는 $2 \cdot 4096 \cdot 16384 \cdot B = 1.3e8 \cdot B$입니다. 따라서 $T_{\text{math}} = (1.3e8 \cdot B) / 3.94e14$초입니다. HBM에서 VMEM으로 $16384 \cdot 4096 + 4096 \cdot B$ 바이트를 로드하고, VMEM에서 HBM으로 $16384 \cdot B$ 바이트를 다시 써야 합니다. 이는 $T_{\text{comms}} = (6.7e7 + 2e4\cdot B) / 8.1e11$초를 의미합니다. 통신과 계산이 최대한 중첩된다고 가정하면, 전체 곱셈은 대략 다음과 같이 걸릴 것입니다.
 
 $$\max\{T_{\text{math}}, T_{\text{comms}}\} = \max\left\{ \frac{6.7 \times 10^{7} + 2 \times 10^{4} \cdot B}{8.1 \times 10^{11}}, \frac{1.3 \times 10^{8} \cdot B}{3.94 \times 10^{14}} \right\}$$
 
-We'll be FLOPs-bound when $\frac{6.7 \times 10^{7} + 2 \times 10^{4} \cdot B}{8.1 \times 10^{11}} < \frac{1.3 \times 10^{8} \cdot B}{3.94 \times 10^{14}}$, or equivalently, $B > 271$. This is slightly larger than the 240 number we derive below because we factor in the full impact of $$D$$ and $$F$$.
+$\frac{6.7e7 + 2e4\cdot B}{8.1e11} < \frac{1.3e8 \cdot B}{3.94e14}$일 때, 즉 $B > 271$일 때 FLOPs 병목 상태가 됩니다. 이는 $$D$$와 $$F$$의 전체 영향을 고려했기 때문에 아래에서 유도하는 240이라는 숫자보다 약간 큽니다.
 
-(2) If instead we are loading from VMEM, let's consider VMEM bandwidth to the MXU as 22 times the HBM $\leftrightarrow$ VMEM bandwidth. This turns our data loading denominator from 8.1e11 to 1.78e13, and we get $B > 11$. Note that in practice, we cannot dedicate all of our VMEM bandwidth to loading $W$, so in practice it will be closer to 20.
-
-{% enddetails %}
-
-**Question 5 [ICI bandwidth]:** Let's say we have a TPU v5e `4x4` slice. Let's say we want to send an array of type `bfloat16[8, 128, 8192]` from `TPU{0,0}` to `TPU{3, 3}`. Let's say the per-hop latency for TPU v5e is $1\mu s$.
-
-1. How soon will the first byte arrive at its destination?
-2. How long will the total transfer take?
-
-{% details Click here for the answer. %}
-
-**Answer:** In a TPUv5e we have 2D connectivity. Because we have only a `4x4` slice (with no axes of size 16), we have no wraparound connections. Thus there are two ports from which our target chip can receive data, and likewise two ports from which our source chip can send data. The amount of data we have to transfer is `2 * 8 * 128 * 8192 = 1.7e7` bytes. We can transfer from both ports simultaneously (i.e. send half the array right and half down), so we get `2 * 4.5e10 = 9e10` bytes transferred per second, which means it'll take about `1.7e7 / 9e10 = 188us` to transfer the whole array through (assuming we're bandwidth bound). In a `4x4` slice, we have six hops between chips $(0, 0)$ and $(3, 3)$, since there are no wraparound links for axes with fewer than 16 chips. Since the latency of each hop is about $1\mu s$, the first byte will arrive in about`6us` and the total transfer will take `188us`.
+(2) 대신 VMEM에서 로드하는 경우, MXU에 대한 VMEM 대역폭을 HBM $\leftrightarrow$ VMEM 대역폭의 22배로 간주합시다. 이렇게 하면 데이터 로딩 분모가 8.1e11에서 1.78e13으로 바뀌고, $B > 11$을 얻습니다. 실제로, 모든 VMEM 대역폭을 $W$ 로드에 할당할 수 없으므로 실제로는 20에 가까울 것입니다.
 
 {% enddetails %}
 
-**Question 6 [pulling it all together, hard]:** Imagine you have a big matrix **A**: `int8[128 * 1024, 128 * 1024]` sharded evenly across a TPU v5e 4x4 slice but offloaded to host DRAM on each chip. Let's say you want to copy the entire array to TPU{0, 0} and multiply it by a vector `bf16[8, 128 * 1024]`. How long will this take? *Hint: use the numbers above.*
+**문제 5 [ICI bandwidth]:** TPU v5e `4x4` 슬라이스가 있다고 가정해 봅시다. `TPU{0,0}`에서 `TPU{3, 3}`으로 `bfloat16[8, 128, 8192]` 타입의 배열을 보내고 싶다고 가정해 봅시다. TPU v5e의 홉당 지연 시간은 $1\mu s$라고 가정합니다.
 
-{% details Click here for the answer. %}
+1.  첫 번째 바이트가 목적지에 도착하는 데 얼마나 걸릴까요?
+2.  전체 전송은 얼마나 걸릴까요?
 
-**Answer:** Let's start by outlining the operations we have to perform. Our array is about 16GB. From the table above, a TPU v5e host has a 4x2 topology, so a 4x4 has 2 hosts, Thus, since our array is evenly sharded, each host effectively contains a chunk of 1/2 of the array, or 8GB. We need to copy these chunks all to TPU{0,0}, which gives us two options:
+{% details 답을 보려면 여기를 클릭하세요. %}
 
-1. We can copy over DCN and then load the entire unsharded array over PCIe into HBM.
-2. We can load our sharded arrays onto their corresponding TPUs, then perform a gather over ICI, then perform the matmul on TPU{0,0}.
+**답:** TPUv5e에는 2D 연결성이 있습니다. `4x4` 슬라이스(크기가 16인 축 없음)만 있기 때문에 랩어라운드 연결이 없습니다. 따라서 대상 칩이 데이터를 수신할 수 있는 포트는 두 개이고, 마찬가지로 소스 칩이 데이터를 보낼 수 있는 포트도 두 개입니다. 전송해야 하는 데이터 양은 `2 * 8 * 128 * 8192 = 1.7e7` 바이트입니다. 두 포트에서 동시에 전송할 수 있으므로(즉, 배열의 절반을 오른쪽으로, 절반을 아래로 보냄), 초당 `2 * 4.5e10 = 9e10` 바이트가 전송되며, 이는 전체 배열을 전송하는 데 약 `1.7e7 / 9e10 = 188us`가 걸릴 것임을 의미합니다(대역폭 병목이라고 가정). `4x4` 슬라이스에서는 16개 미만의 칩을 가진 축에 대한 랩어라운드 링크가 없으므로 칩 $(0, 0)$과 $(3, 3)$ 사이에는 6개의 홉이 있습니다. 각 홉의 지연 시간은 약 $1\mu s$이므로, 첫 번째 바이트는 약 `6us` 후에 도착하고 전체 전송에는 `188us`가 걸릴 것입니다.
 
-It should be clear that option (2) is better. DCN is slow compared to ICI and we'd much prefer to load a big array over many PCIe links rather than just a few (the 8 on host 0). Here's a diagram of part of the system. As described above, note that TPUs are connected to their neighbors by ICI (even across hosts), all TPUs are connected to their host CPU (via PCIe), and hosts are connected by DCN.
+{% enddetails %}
 
-{% include figure.liquid path="assets/img/challenge-problem.png" class="img-fluid img-small" caption="Each chip actually has its own PCIe link to its host, though for clarity only one is shown here." %}
+**문제 6 [pulling it all together, hard]:** TPU v5e 4x4 슬라이스에 걸쳐 균등하게 샤딩되었지만 각 칩의 호스트 DRAM에 오프로드된 큰 행렬 **A**: `int8[128 * 1024, 128 * 1024]`가 있다고 상상해 봅시다. 전체 배열을 TPU{0, 0}으로 복사하고 벡터 `bf16[8, 128 * 1024]`와 곱하고 싶다고 가정해 봅시다. 얼마나 오래 걸릴까요? *힌트: 위의 수치를 사용하세요.*
 
-Now let's work through how long each piece will take:
+{% details 답을 보려면 여기를 클릭하세요. %}
 
-1. **PCIe load**: we're loading chunks of 16GB over 16 PCIe links, each of which has `1.5e10` bytes/second bandwidth. Thus this will take about 66ms.
+**답:** 수행해야 할 작업을 개괄하는 것으로 시작하겠습니다. 우리 배열은 약 16GB입니다. 위 표에서, TPU v5e 호스트는 4x2 토폴로지를 가지고 있으므로, 4x4는 2개의 호스트를 가집니다. 따라서, 배열이 균등하게 샤딩되었으므로 각 호스트는 효과적으로 배열의 1/2, 즉 8GB의 청크를 포함합니다. 이 청크들을 모두 TPU{0,0}으로 복사해야 하며, 여기에는 두 가지 옵션이 있습니다:
 
-2. **ICI copy:** each TPU now has 16GB / 16 = 1GB of our array. Our ICI bandwidth is 9e10 bytes/second per link *bidirectional*, and you'll notice from the above diagram that only 2 of the 4 ICI links on the TPU v5e are in use in this topology for TPU{0,0}. Since TPU{0,0} needs to receive a total of 15GB along 2 axes at `4.5e10` bytes/s/link, we can lower bound the time by `15e9 / (4.5e10 * 2) = 167ms`. In practice this probably isn't achievable because the load is very uneven, but it's probably within a factor of 2. As you'll see in Section 2, performing a full AllGather would also take roughly `16e9 / (4.5e10 * 2)`, so this is close to optimal.
+1.  DCN을 통해 복사한 다음 전체 샤딩되지 않은 배열을 PCIe를 통해 HBM으로 로드할 수 있습니다.
+2.  샤딩된 배열을 해당 TPU에 로드한 다음, ICI를 통해 gather를 수행하고, TPU{0,0}에서 matmul을 수행할 수 있습니다.
 
-3. **HBM $\rightarrow$ MXU load:** to perform our final matmul, we need to load these 16e9 bytes plus the bf16[8, 128 \* 1024] array (another 2MB, so negligible) over HBM bandwidth into the MXU, which will take `16e9 / 8.1e11 = 19ms`.
+옵션 (2)가 더 낫다는 것이 분명합니다. DCN은 ICI에 비해 느리고, 몇 개의 PCIe 링크(호스트 0의 8개)가 아닌 많은 PCIe 링크를 통해 큰 배열을 로드하는 것을 훨씬 선호합니다. 다음은 시스템 일부의 다이어그램입니다. 위에서 설명한 대로, TPU는 ICI를 통해 이웃에 연결되고(호스트 간에도), 모든 TPU는 호스트 CPU에 연결되며(PCIe를 통해), 호스트는 DCN으로 연결됩니다.
 
-4. **FLOPs:** we're performing a total of $$2 \cdot 8 \cdot 128 \cdot 1024 \cdot 128 \cdot 1024 = 2.7 \times 10^{11}$$ FLOPs, and since we can perform `1.97e14` bf16 FLOPs/s, we get 1.3ms.
+{% include figure.liquid path="assets/img/challenge-problem.png" class="img-fluid img-small" caption="명확성을 위해 여기에는 하나만 표시되었지만, 실제로는 각 칩이 호스트에 자체 PCIe 링크를 가지고 있습니다." %}
 
-An upper bound for the total time is the sum of all of these times, but since the TPU can typically overlap these operations, we can think of this as a pipelining problem that's bottlenecked by the slowest piece. Assuming that's true, then the answer is at least 167ms, likely closer to 200ms with imperfect overlapping.
+이제 각 부분이 얼마나 걸릴지 살펴보겠습니다:
+
+1.  **PCIe 로드**: 16개의 PCIe 링크를 통해 16GB / 2 = 8GB의 청크를 로드하고 있으며, 각 링크는 초당 `1.5e10` 바이트의 대역폭을 가집니다. 따라서 이는 약 33ms가 걸릴 것입니다.
+
+2.  **ICI 복사:** 각 TPU는 이제 배열의 16GB / 16 = 1GB를 가지고 있습니다. ICI 대역폭은 링크당 *양방향*으로 초당 9e10 바이트이며, 위 다이어그램에서 TPU{0,0}의 경우 이 토폴로지에서 4개의 ICI 링크 중 2개만 사용 중임을 알 수 있습니다. TPU{0,0}이 2개의 축을 따라 링크당 `4.5e10` bytes/s로 총 15GB를 수신해야 하므로, 시간의 하한은 `15e9 / (4.5e10 * 2) = 167ms`로 정할 수 있습니다. 실제로 로드가 매우 고르지 않기 때문에 이는 아마도 달성할 수 없겠지만, 아마도 2배 이내일 것입니다. 섹션 2에서 보게 되겠지만, 전체 AllGather를 수행하는 데도 대략 `16e9 / (4.5e10 * 2)`가 걸릴 것이므로, 이것은 최적에 가깝습니다.
+
+3. **HBM $\rightarrow$ MXU load:** 최종 matmul을 수행하려면, 이 16e9 바이트와 bf16[8, 128 \* 1024] 배열(또 다른 2MB이므로 무시 가능)을 HBM 대역폭을 통해 MXU로 로드해야 하며, 이는 `16e9 / 8.1e11 = 19ms`가 걸릴 것입니다.
+
+4.  **FLOPs:** 총 $$2 \cdot 8 \cdot 128 \cdot 1024 \cdot 128 \cdot 1024 = 2.7e11$$ FLOPs를 수행하고 있으며, 초당 `1.97e14` bf16 FLOPs를 수행할 수 있으므로 1.3ms를 얻습니다.
+
+총 시간에 대한 상한은 이 모든 시간의 합이지만, TPU가 일반적으로 이러한 작업을 중첩시킬 수 있으므로, 이는 가장 느린 부분이 병목이 되는 파이프라이닝 문제로 볼 수 있습니다. 그것이 사실이라고 가정하면, 답은 약 150-200ms입니다.
 
 {% enddetails %}
 
 <h3 markdown=1 class="next-section">That's it for Part 2! For Part 3, covering partitioning and cross-TPU communication, [click here](../sharding).</h3>
 
+<h3 markdown=1 class="next-section">파트 2는 여기까지입니다! 파티셔닝과 교차 TPU 통신을 다루는 파트 3을 보려면, [여기를 클릭하세요](../sharding).</h3>
+
 ## Appendix
 
 ### Appendix A: More on TPU internals
 
-Here we'll dive more deeply into the internal operations of a TPU. Unless otherwise noted, we'll provide specs for a TPU v5p.
+여기서는 TPU의 내부 작동에 대해 더 깊이 파고들어 보겠습니다. 별도의 언급이 없는 한, TPU v5p의 사양을 기준으로 설명합니다.
 
 ### VPU
 
-The VPU is the TPU's vector arithmetic core. The VPU consists of a two dimensional SIMD vector machine (the **VPU**) that performs elementwise arithmetic operations like vadd (vector addition) or vmax (elementwise max) and a set of vector registers called **VREGs** that hold data for the VPU and MXU.
+VPU는 TPU의 벡터 연산 코어(vector arithmetic core)입니다. VPU는 vadd(vector addition)나 vmax(elementwise max) 같은 원소별 산술 연산을 수행하는 2차원 SIMD 벡터 머신(**VPU**)과, VPU 및 MXU를 위한 데이터를 담는 벡터 레지스터 세트인 **VREGs**로 구성됩니다.
 
-**VREGs:** Each TPU v5p core has 64 32-bit VREGs (32 in TPU v4), giving us a total of about `64 * 8 * 128 * 4 = 256kB` of VREG memory per core (or 2x this for the whole chip since we have two cores). A TPU v5p can load 3 registers from VMEM each cycle, and write 1 register to VMEM each cycle.
+**VREGs:** 각 TPU v5p 코어는 64개의 32비트 VREGs를 가집니다(TPU v4는 32개). 따라서 코어당 총 `64 * 8 * 128 * 4 = 256kB`의 VREG 메모리가 있으며, 칩 전체로는 두 개의 코어가 있으므로 이의 2배입니다. TPU v5p는 매 사이클마다 VMEM에서 3개의 레지스터를 로드하고, VMEM에 1개의 레지스터를 쓸 수 있습니다.
 
-**VPU:** The VPU is a 2D vector arithmetic unit of shape `(8, 128)` where the 128 dimension is referred to as lane axis and the dimension of 8 is referred to as the sublane axis. Each (lane, sublane) pair on v5 contains 4 standard floating-point ALUs which are independent of each other. The VPU executes most arithmetic instructions in one cycle in each of its ALUs (like vadd or vector add) with a latency of 2 cycles, so e.g. in v5 you can add 4 pairs of f32 values together from VREGs in each cycle. A typical VPU instruction might look like `{v2 = vadd.8x128.f32 v0, v1}` where v0 and v1 are input VREGs and v2 is an output VREG.
+**VPU:** VPU는 `(8, 128)` 모양의 2D 벡터 산술 유닛으로, 128 차원은 레인 축(lane axis)이라 하고 8 차원은 서브레인 축(sublane axis)이라고 합니다. v5의 각 (레인, 서브레인) 쌍에는 서로 독립적인 4개의 표준 부동소수점 ALU가 포함되어 있습니다. VPU는 대부분의 산술 instruction을 각 ALU에서 한 사이클에 실행하며(vadd 또는 벡터 덧셈과 같이) 2 사이클의 지연 시간을 가집니다. 따라서 예를 들어 v5에서는 매 사이클마다 VREG에서 4쌍의 f32 값을 더할 수 있습니다. 일반적인 VPU instruction은 `{v2 = vadd.8x128.f32 v0, v1}`과 같이 보일 수 있으며, 여기서 v0과 v1은 입력 VREG이고 v2는 출력 VREG입니다.
 
-All lanes and sublanes execute the same program every cycle in a pure SIMD manner, but each ALU can perform a different operation. So we can e.g. process 1 vadd and 1 vsub in a single cycle, each of which operates on two full VREGs and writes the output to a third.
+모든 레인과 서브레인은 순수한 SIMD 방식으로 매 사이클마다 동일한 프로그램을 실행하지만, 각 ALU는 다른 연산을 수행할 수 있습니다. 따라서 예를 들어, 한 사이클에 1개의 vadd와 1개의 vsub를 처리할 수 있으며, 각각은 두 개의 전체 VREG에서 작동하고 출력을 세 번째에 씁니다.
 
-**Pop Quiz [Calculating VPU throughput]:** Using the above information, calculate how many vector FLOPs/s a TPU v5p can perform. A TPU v5p has a clock speed of about 1.75GHz.
+**Pop Quiz [Calculating VPU throughput]:** 위의 정보를 사용하여 TPU v5p가 초당 몇 번의 벡터 FLOPs를 수행할 수 있는지 계산해 보세요. TPU v5p의 클럭 속도는 약 1.75GHz입니다.
 
-{% details Click here for the answer. %}
+*답*: 매 사이클마다 각 코어는 `8 * 128`개의 ALU에서 4개의 벡터 instruction을 실행할 수 있습니다. 이는 칩 전체에 대해 `8 * 128 * 4 * 2` FLOPs/cycle을 제공하며, 즉 `8 * 128 * 4 * 2 * 1.75e9 = 1.4e13 FLOPs/s`입니다. 이 값이 MXU FLOPs/s인 약 `2e14`(대략 10배 차이)보다 얼마나 작은지 주목하세요.
 
-*Answer*: Each cycle, each core can execute 4 vector instructions on `8 * 128` ALUs. This gives us `8 * 128 * 4 * 2` FLOPs/cycle for the whole chip, or `8 * 128 * 4 * 2 * 1.75e9 = 1.4e13 FLOPs/s`. Note how much smaller this is than the MXU FLOPs/s of about `2e14` (roughly 10x).
+**Reductions(축소)):** 일반적으로 서브레인 차원에서의 통신이나 축소는 레인 차원보다 쉽습니다. 예를 들어, VPU는 약 한 사이클 만에 크기 8의 축을 따라 롤링할 수 있는 레인 내 셔플(intra-lane shuffle) 연산을 지원합니다. 이는 서브레인 차원을 따라 효율적인 축소를 수행하는 데 사용될 수 있습니다(단지 2, 4, 6만큼 셔플하고 3쌍의 elementwise sums을 수행하면 됨).
 
-{% enddetails %}
+Cross-lane reductions(교차 레인 축소)는 훨씬 더 어렵고 XLU 또는 "cross lane unit"이라는 별도의 하드웨어 유닛을 포함하며, 이는 느리고 상당히 비쌉니다.
 
-**Reductions:** Generally, communication or reduction across the sublane dimension is easier than across the lane dimension. For instance, the VPU supports an intra-lane shuffle operation that can roll along the axis of size 8 in about a cycle. This can be used to perform efficient reductions along the sublane dimension (just shuffle by 4, 2, and 1 and do 3 pairs of elementwise sums).
-
-Cross-lane reductions are much harder and involve a separate hardware unit called the XLU or "cross lane unit", which is slow and fairly expensive.
-
-**Comparison to GPUs:** For those familiar with NVIDIA GPUs, each ALU in the VPU is analogous to a CUDA core, and a single VPU lane is analogous to a "Warp Scheduler", i.e. the set of usually 32 CUDA Cores that perform SIMD arithmetic. Reductions within the lane are pretty easy, but if we need to cross lanes, we need to transit at least VMEM/XLU/SMEM which is much slower. See the [GPU section](../gpus) for more details.
+**GPU와의 비교:** NVIDIA GPU에 익숙한 분들을 위해 설명하자면, VPU의 각 ALU는 CUDA 코어와 유사하며, 단일 VPU 레인은 보통 32개의 CUDA 코어 세트로 구성된 SIMD 연산을 수행하는 "워프 스케줄러(Warp Scheduler)"와 유사합니다. 레인 내에서의 축소는 꽤 쉽지만, 레인을 넘어야 한다면 훨씬 느린 VMEM/XLU/SMEM을 최소 한 번 거쳐야 합니다.
 
 ### Scalar Core
 
-The scalar core is the control unit of the TPU. It fetches and dispatches all instructions and executes transfers from HBM into VMEM, and can be programmed to do scalar metadata work. Because the scalar core is single-threaded, one side-effect of this is that each core of the TPU is only capable of creating one DMA request per cycle.
+Scalar Core(스칼라 코어)는 TPU의 제어 유닛입니다. 모든 instruction을 가져와 디스패치하고 HBM에서 VMEM으로의 전송을 실행하며, 스칼라 메타데이터 작업을 하도록 프로그래밍할 수 있습니다. 스칼라 코어는 단일 스레드이므로, 이의 한 가지 부작용은 TPU의 각 코어가 사이클당 하나의 DMA 요청만 생성할 수 있다는 것입니다.
 
-To put this in context, a single scalar core controls a VPU (consisting of 4096 ALUs), 4 MXUs, 2 XLUs, and multiple DMA engines. The highly skewed nature of control per unit compute is a source of hardware efficiency, but also limits the ability to do data dependent vectorization in any interesting way.
+이것을 맥락에 넣어보면, 단일 스칼라 코어는 VPU(4096개의 ALU로 구성), 4개의 MXU, 2개의 XLU 및 여러 DMA 엔진을 제어합니다. 단위 연산당 제어의 고도로 편향된 특성은 하드웨어 효율성의 원천이지만, 흥미로운 방식으로 데이터 종속 벡터화를 수행하는 능력을 제한하기도 합니다.
 
-### Appendix B: How does a systolic array work?
+### Appendix B: All about GPUs
 
-At the core of the TPU MXU is a `128x128` systolic array (`256x256` on TPU v6e). When fully saturated the systolic array can perform one `bfloat16[8,128] @ bf16[128x128] -> f32[8,128]`<d-footnote>If you are not familiar with this notation, it means: multiplying a `8x128` matrix with bfloat16 elements by a `128x128` matrix with bfloat16 elements and storing the results in a `8x128` matrix with float32 elements.</d-footnote> multiplication per 8 clock cycles.
+Volta 세대(V100) 이후로, TPU와 GPU는 매우 유사해 보이기 시작했습니다: _둘 다 행렬 곱셈을 매우 빠르게 수행하는 것을 목표로 합니다_. 둘 다 CPU에 부착된 가속기로 작동하며 많은 구성 요소가 대략적으로 유사합니다(모든 용어를 모른다고 걱정하지 마세요, 나중에 모두 소개할 것입니다):
 
-* At its core, the systolic array is a 2D `128x128` (`=16,384`) grid of ALUs each capable of performing a multiply and add operation.
-* Weights (**W**, the `128x128` input) are passed down from above (called the RHS) while inputs (**X**, the `8x128` input) are passed in from the left (called the LHS).
+|     TPU     |                    GPU                    |
+| :---------: | :---------------------------------------: |
+| Tensor Core |      SM ("Streaming Multiprocessor")      |
+|     HBM     |                   DRAM                    |
+|    VMEM     |     SMEM (often used as an L1 cache)      |
+|     VPU     | Warp scheduler (a set of SIMD CUDA cores) |
+|     MXU     |                Tensor Core                |
+|     ICI     |              NVLink/NVSwitch              |
 
-Here is a simplified animation of multiplying a set of weights (blue) with a set of activations (green). You'll notice that the weights (RHS) are partially loaded first, diagonally, and then the activations are fed in, also diagonally. In each frame below, we multiply all the overlapped green and blue units, sum the result with any residual passed in from above, and then pass the result in turn down one unit.
+GPU의 핵심 유닛은 SM, 즉 "streaming multiprocessor(스트리밍 멀티프로세서)"이며, 이는 위에서 설명한 전체 TPU Tensor Core와 대략적으로 유사합니다. 하지만 TPU에 비해 GPU는 _훨씬_ 더 많은 SM을 가지고 있습니다(H100은 약 144개). 각 SM에는 TPU MXU처럼 작동하는 자체 행렬 곱셈 유닛(혼동스럽게도 Tensor Core라고 불림)과 TPU VPU처럼 작동하는 4개의 좁은 SIMD 유닛 세트(1024 레인 대신 32 레인)인 워프 스케줄러가 있습니다. 더 많은 독립적인 SM은 계산을 더 유연하게 만들지만(각각이 완전히 독립적인 작업을 할 수 있으므로), 하드웨어를 더 비싸고 추론하기 복잡하게 만듭니다.
+
+{% include figure.liquid path="assets/img/b100-sm-diagram.png" class="img-small" caption="<b>Figure:</b> Blackwell (B100) SM의 기본 구성 요소. 다이어그램은 4개의 SIMD 연산 유닛(워프 스케줄러라고 부름)을 보여주며, 각각 행렬 곱셈을 위한 Tensor Core를 가지고 있습니다. 또한 워프 스케줄러별 레지스터, SM 수준의 L1 캐시, 그리고 Blackwell에서 새로 추가된 TMEM 또는 텐서 메모리를 보여줍니다." %}
+
+각 SM에는 데이터 접근을 가속화하고 레지스터 spilling에 사용되는 O(256kB)의 L1 캐시(SMEM이라고도 함)가 있습니다. L1 캐시에 사용되는 메모리의 일부는 스레드 블록의 모든 스레드에서 접근할 수 있는 공유 메모리로 선언될 수도 있으며, user-defined(사용자 정의) 캐시, 병렬 축소 및 동기화 등에 사용됩니다(TPU의 VMEM과 유사).
+
+GPU에는 모든 SM이 공유하는 추가적인 L2 캐시도 있습니다. VMEM과 달리, 이는 하드웨어 관리되며 캐시 적중률을 최적화하는 것이 종종 성능에 중요합니다.
+
+**Networking:**
+
+* 주요 차이점은 NVIDIA GPU가 일반적으로 스위치(NVLink $\rightarrow$ NVSwitch)를 통해 8-256 GPU의 'clique'에 있다는 것입니다. 이는 해당 'clique' 내의 모든 GPU 간의 점대점 통신을 허용하지만, 256개 이상의 통신은 훨씬 느리다는 것을 의미합니다. 이는 256개 이상에서의 훈련은 일반적으로 확장을 위해 더 복잡한 파이프라인 병렬 처리가 필요함을 의미합니다(대조적으로, PaLM은 각각 3072개의 TPU 칩으로 구성된 두 개의 clique에서 훈련되었습니다).
+* AllReduce와 같은 일반적인 신경망 연산의 경우, all-to-all(전-대-전) 연결은 이점이 없습니다(어쨌든 동일한 통신 패턴이 발생해야 함). 하지만 더 많은 GPU에 MoE 모델을 저장하고 전문가(expert)를 더 효율적으로 전송할 수 있게 합니다.
+* 각 GPU는 GPU 자체와 비슷한 비용의 스위치를 필요로 하므로, ICI와 같은 온칩 interconnect이 더 저렴합니다.
+* [NVIDIA deep learning performance](https://docs.nvidia.com/deeplearning/performance/dl-performance-gpu-background/index.html#gpu-arch) 
+* [NVSwitch](https://www.nvidia.com/en-au/data-center/nvlink/) 
+* 텐서 병렬 처리 / 파이프라인 병렬 처리 전환점이 매우 다릅니다!
+
+### Appendix C: How does a systolic array work?
+
+TPU MXU의 핵심에는 `128x128` 시스톨릭 배열(TPU v6e에는 `256x256`)이 있습니다. 완전히 포화 상태(fully saturated)일 때, 시스톨릭 배열은 8 클럭 사이클마다 `bfloat16[8,128] @ bf16[128x128] -> f32[8,128]`<d-footnote>이 표기법에 익숙하지 않다면, 이는 bfloat16 element를 가진 `8x128` 행렬을 bfloat16 element를 가진 `128x128` 행렬과 곱하고 그 결과를 float32 element를 가진 `8x128` 행렬에 저장하는 것을 의미합니다.</d-footnote> 곱셈을 한 번 수행할 수 있습니다.
+
+* 핵심은, 시스톨릭 배열은 각각 곱셈과 덧셈 연산을 수행할 수 있는 2차원 `128x128` (`=16,384`)개의 ALU 그리드입니다.
+* 가중치(**W**, `128x128` 입력)는 위에서 아래로(RHS라고 함) 전달되고, 입력(**X**, `8x128` 입력)은 왼쪽에서(LHS라고 함) 전달됩니다.
+
+다음은 가중치 세트(파란색)를 활성화 세트(녹색)와 곱하는 간단한 애니메이션입니다. 가중치(RHS)가 먼저 부분적으로 대각선으로 로드된 다음, 활성화도 대각선으로 공급되는 것을 알 수 있습니다. 아래 각 프레임에서, 우리는 모든 겹치는 녹색과 파란색 유닛을 곱하고, 그 결과를 위에서 전달된 residual과 합한 다음, 그 결과를 차례로 한 유닛 아래로 전달합니다.
 
 {% include figure.liquid path="assets/img/systolic-array.gif" %}
 
-Here's a more general version of this animation showing the output being streamed out of computation:
+다음은 출력이 계산에서 스트리밍되는 것을 보여주는 이 애니메이션의 더 일반적인 버전입니다:
 
 {% include figure.liquid path="assets/img/systolic-array2.gif" class="img-small" %}
 
-Here's a diagram showing how this can be pipelined across multiple RHS and LHS arrays:
+다음은 여러 RHS 및 LHS 배열에 걸쳐 어떻게 파이프라인화될 수 있는지를 보여주는 다이어그램입니다:
 
 {% include figure.liquid path="assets/img/systolic-array-pipelining.png" class="img-fluid" %}
 
-There is an initial pipeline bubble as the weights (RHS) and activations (LHS) are loaded. After that initial bubble, new inputs and weights can be loaded in without an additional bubble.
+가중치(RHS)와 활성화(LHS)가 로드될 때 초기 파이프라인 버블이 있습니다. 그 초기 버블 이후에는 추가적인 버블 없이 새로운 입력과 가중치를 로드할 수 있습니다.
 
-Here's a bad animation of a bf16[2, 3] x bf16[3, 3] matrix multiplication, which you could imagine as a matmul of a 2x3 weight matrix with an input activation of batch 1 and size 3. This is rotated compared to the previous slides and inputs flow out to the right instead of down, but you can roughly see the structure.
+
+다음은 bf16[2, 3] x bf16[3, 3] 행렬 곱셈의 좋지 않은 애니메이션으로, 배치 1과 크기 3의 입력 활성화와 2x3 가중치 행렬의 matmul로 상상할 수 있습니다. 이것은 이전 슬라이드와 비교하여 회전되어 있으며 입력은 아래가 아닌 오른쪽으로 흐르지만, 대략적인 구조를 볼 수 있습니다.
 
 {% include figure.liquid path="assets/img/systolic-array-bad.gif" class="img-small" %}
 
-We can efficiently pipeline this to multiply large matrices without too large a pipeline bubble. With that said, it's important that our matrices have shapes larger than the side dimension of the MXU, which is generally 128x128. Some TPUs (since TPU v3) have multiple MXUs, either 2 for TPU v3 and 4 for TPU v4/5, so we need to ensure tiling dimensions are larger than 128 * number of MXUs. [Here's](https://www.youtube.com/watch?v=sJltBQ4MOHA) a good animation for this.
+우리는 너무 큰 파이프라인 버블 없이 큰 행렬을 곱하기 위해 이것을 효율적으로 파이프라인화할 수 있습니다. 그렇긴 하지만, 우리 행렬의 모양이 MXU의 측면 차원(일반적으로 128x128)보다 큰 것이 중요합니다. 일부 TPU(TPU v3 이후)에는 여러 개의 MXU가 있으므로(TPU v3의 경우 2개, TPU v4/5의 경우 4개), 타일링 차원이 128 * MXU 수보다 큰지 확인해야 합니다. [여기](https://www.youtube.com/watch?v=sJltBQ4MOHA)에 이것을 위한 좋은 애니메이션이 있습니다.
 
-Trillium (TPU v6e) has a `256x256` systolic array, which means it can perform 4x more FLOPs / cycle. This also means the dimensions of your tensors needs to be twice as large to utilize the MXU fully.
+Trillium (TPU v6e)는 `256x256` 시스톨릭 배열을 가지고 있어, 사이클당 4배 더 많은 FLOPs를 수행할 수 있습니다. 이는 또한 MXU를 완전히 활용하기 위해 텐서의 차원이 두 배 더 커져야 함을 의미합니다.
 
-[This blog post](https://fleetwood.dev/posts/domain-specific-architectures#google-tpu) has another excellent animation of a systolic array multiplication for a fixed weight matrix.
+[블로그 게시물](https://fleetwood.dev/posts/domain-specific-architectures#google-tpu) 고정된 가중치 행렬에 대한 시스톨릭 배열 곱셈의 또 다른 훌륭한 애니메이션이 있습니다.[역자 주: [해당 글](https://tulip-phalange-a1e.notion.site/AI-Domain-Specific-Architectures-23cc32470be28025bbffe42e15e58d99?pvs=74)의 번역본입니다, 다만 애니메이션은 원문에서 보시는게 좋습니다!]
