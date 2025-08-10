@@ -2,7 +2,7 @@
 layout: distill
 title: "Sharded Matrices and How to Multiply Them"
 # permalink: /main/
-description: "When we train large ML models, we have to split (or “shard”) their parameters or inputs across many accelerators. Since LLMs are mostly made up of matrix multiplications, understanding this boils down to understanding how to multiply matrices when they're split across devices. We develop a simple theory of sharded matrix multiplication based on the cost of TPU communication primitives."
+description: "여기서는 가장 큰 ML 모델들이 어떻게 여러 가속기에 걸쳐 분할(또는 '샤딩(sharded)')되는지 설명합니다. LLM은 대부분 행렬 곱셈으로 이루어져 있으므로, 이를 이해하는 것은 결국 행렬이 여러 디바이스에 분할되어 있을 때 어떻게 곱하는지를 이해하는 것으로 귀결됩니다. 저희는 TPU 통신 기본 연산(primitive)의 비용에 기반한 샤딩된 행렬 곱셈의 간단한 이론을 개발합니다."
 date: 2025-02-04
 future: true
 htmlwidgets: true
@@ -87,77 +87,75 @@ _styles: >
   }
 ---
 
+<p markdown=1 class="takeaway">
+<b>번역 안내:</b> 원저자([Jacob Austin](https://www.jacobaustin.org/))의 허락을 받아 원문을 번역 중입니다.<br> 
+해당 글의 1인칭은 원문 저자를 지칭합니다.<br> 
+원문: [How to Scale Your Model](https://jax-ml.github.io/scaling-book/)<br> 
+번역: [신종훈](https://www.linkedin.com/in/michael-shin-3522a6189/)</p>
+
 ## Partitioning Notation and Collective Operations
 
-When we train an LLM on ten thousand TPUs or GPUs, we're still doing abstractly the same computation as when we're training on one. The difference is that **our arrays don't fit in the HBM of a single TPU/GPU**, so we have to split them.<d-footnote>It's worth noting that we may also choose to parallelize for speed. Even if we could fit on a smaller number of chips, scaling to more simply gives us more FLOPs/s. During inference, for instance, we can sometimes fit on smaller topologies but choose to scale to larger ones in order to reduce latency. Likewise, during training we often scale to more chips to reduce the step time.</d-footnote> We call this "*sharding*” or "*partitioning*” our arrays. The art of scaling is figuring out how to shard our models so computation remains efficient.
+수만 개의 TPU에서 LLM을 훈련할 때도, 추상적으로는 하나의 TPU에서 훈련할 때와 동일한 계산을 수행합니다. 차이점은 **우리의 배열이 단일 TPU의 HBM에 들어가지 않아서** 분할해야 한다는 것입니다.<d-footnote>속도를 위해 병렬화를 선택할 수도 있다는 점은 주목할 가치가 있습니다. 더 적은 수의 칩에 넣을 수 있더라도, 더 많은 칩으로 확장하면 단순히 더 많은 FLOPs/s를 얻을 수 있습니다. 예를 들어, 추론 중에는 더 작은 토폴로지에 맞출 수 있지만 지연 시간을 줄이기 위해 더 큰 토폴로지로 확장하기도 합니다. 마찬가지로, 훈련 중에는 스텝 시간을 줄이기 위해 더 많은 칩으로 확장하는 경우가 많습니다.</d-footnote> 우리는 이를 배열을 "*샤딩(sharding)*" 또는 "*파티셔닝(partitioning)*"한다고 말합니다.
 
-Here's an example 2D array **A** sharded across 4 TPUs:
+다음은 4개의 TPU에 걸쳐 샤딩된 2D 배열 **A**의 예입니다:
 
-{% include figure.liquid path="assets/img/sharding-example.png" class="img-fluid" caption="<b>Figure:</b> an example array of shape <b>A</b>[I, J] gets sharded across 4 devices. Both dimensions are evenly sharded across 2 devices with a sharding <b>A</b>[I<sub>X</sub>, J<sub>Y</sub>]. Each TPU holds 1/4 of the total memory." %}
+{% include figure.liquid path="assets/img/sharding-example.png" class="img-fluid" caption="<b>Figure:</b><b>A</b>[I, J] 형태의 예제 배열이 4개의 디바이스에 걸쳐 샤딩됩니다. 두 차원 모두 <b>A</b>[I<sub>X</sub>, J<sub>Y</sub>] 샤딩으로 2개의 디바이스에 걸쳐 균등하게 샤딩됩니다. 각 TPU는 전체 메모리의 1/4을 보유합니다." %}
 
-Note how the sharded array still has the same *global* or *logical shape* as unsharded array, say `(4, 128)`, but it also has a *device local shape*, like `(2, 64)`, which gives us the actual size in bytes that each TPU is holding (in the figure above, each TPU holds ¼ of the total array). Now we'll generalize this to arbitrary arrays.
+샤딩된 배열은 여전히 샤딩되지 않은 배열과 동일한 *전역(global)* 또는 *논리적 형태(logical shape)*(예: `(4, 128)`)를 가지지만, `(2, 64)`와 같은 *디바이스 로컬 형태(device local shape)*도 가집니다. 이는 각 TPU가 실제로 보유하고 있는 바이트 단위의 크기를 알려줍니다(위 그림에서 각 TPU는 전체 배열의 ¼을 보유함). 이제 이를 임의의 배열로 일반화해 보겠습니다.
 
 ### A unified notation for sharding
 
-We use a variant of *named-axis notation* to describe *how* the tensor is sharded in blocks across the devices: we assume the existence of a 2D or 3D grid of devices called the **device mesh** where each axis has been given **mesh axis names** **e.g. X**, **Y, and Z.** We can then specify how the matrix data is laid out across the device mesh by describing how each named dimension of the array is partitioned across the physical mesh axes. We call this assignment a **sharding**.
+우리는 텐서가 디바이스에 걸쳐 블록으로 *어떻게* 샤딩되는지를 설명하기 위해 *named-axis notation*의 변형을 사용합니다: **X**, **Y, Z**와 같이 **메시 축 이름(mesh axis names)**이 부여된 2D 또는 3D 디바이스 그리드인 **디바이스 메시(device mesh)**가 있다고 가정합니다. 그런 다음 배열의 각 이름 있는 차원이 물리적 메시 축에 걸쳐 어떻게 분할되는지를 설명함으로써 행렬 데이터가 디바이스 메시에 어떻게 배치되는지를 지정할 수 있습니다. 우리는 이 할당을 **샤딩(sharding)**이라고 부릅니다.
 
-**Example (the diagram above)**: For the above diagram, we have:
-* **Mesh:** the device mesh above `Mesh(devices=((0, 1), (2, 3)), axis_names=(‘X', ‘Y'))`, which tells us we have 4 TPUs in a 2x2 grid, with axis names $X$ and $Y$.
-* **Sharding:** $A[I_X, J_Y]$, which tells us to shard the first axis, $I$, along the mesh axis $X$, and the second axis, $J$, along the mesh axis $Y$. This sharding tells us that each shard holds $1 / (\lvert X\rvert \cdot \lvert Y\rvert)$ of the array.
+**예제 (위 다이어그램)**: 위 다이어그램의 경우, 다음과 같습니다:
+* **Sharding:** $A[I_X, J_Y]$, 이는 첫 번째 축 $I$를 메시 축 $X$를 따라 샤딩하고, 두 번째 축 $J$를 메시 축 $Y$를 따라 샤딩하라는 것을 알려줍니다. 이 샤딩은 각 샤드가 배열의 $1 / (\lvert X\rvert \cdot \lvert Y\rvert)$ 를 보유함을 알려줍니다.
+* **Mesh:** 위 디바이스 메시 `Mesh(devices=((0, 1), (2, 3)), axis_names=(‘X', ‘Y'))` 는 4개의 TPU가 2x2 그리드에 있으며, 축 이름이 $X$와 $Y$임을 알려줍니다.
 
-Taken together, we know that the local shape of the array (the size of the shard that an individual device holds) is $(\lvert I\rvert / 2, \lvert J\rvert / 2)$, where $$\lvert I\rvert$$ is the size of A's first dimension and $$\lvert J\rvert$$ is the size of A's second dimension.
+이 둘을 종합하면, 배열의 로컬 형태(개별 디바이스가 보유하는 샤드의 크기)는 $(\lvert I\rvert / 2, \lvert J\rvert / 2)$ 임을 알 수 있습니다. 여기서 $$\lvert I\rvert$$ 는 A의 첫 번째 차원 크기이고 $$\lvert J\rvert$$ 는 A의 두 번째 차원 크기입니다.
 
-<b markdown=1 style="color: #048affff;">Pop Quiz [2D sharding across 1 axis]:</b> Consider an array `fp32[1024, 4096]` with sharding $A[I_{XY}, J]$ and mesh `{'X': 8, 'Y': 2}`. How much data is held by each device? How much time would it take to load this array from HBM on H100s (assuming `3.4e12` memory bandwidth per chip)?
+**Example (1개 축에 대한 2D 샤딩)**: $A[I_{XY}, J]$ 는 첫 번째 차원(I)을 X와 Y 하드웨어 축 모두에 걸쳐 샤딩합니다. 디바이스당 바이트 수는 이전 샤딩과 동일하지만 로컬 형태는 다릅니다. 이제 $(\lvert I\rvert /(\lvert X\rvert \cdot \lvert Y\rvert), \lvert J\rvert)$ 입니다.
 
-{% details Click here for the answer. %}
-
-$A[I_{XY}, J]$ shards the first dimension (I) along both the X and Y hardware axes. In this example, the local shape is $(\lvert I\rvert /(\lvert X\rvert \cdot \lvert Y\rvert), \lvert J\rvert)$. For the given example, the global shape is `fp32[1024, 4096]`, so the local shape is `fp32[64, 4096]`.
-
-Since each GPU has `4 * 64 * 4096 = 1MiB` bytes, this would take about `1e6 / 3.4e12 = 294ns`, although likely significantly more due to various overheads since this is so small.
-
-{% enddetails %}
-
-**Visualizing these shardings:** Let's try to visualize these shardings by looking at a 2D array of data split over 4 devices:
+**Visualizing these shardings:** 4개의 디바이스에 분할된 2D 데이터 배열을 보며 이러한 샤딩을 시각화해 봅시다:
 
 {% include figure.liquid path="assets/img/sharding-colored1.png" class="img-fluid img-small" %}
 
-We write the *fully-replicated* form of the matrix simply as $A[I, J]$ with no sharding assignment. This means that *each* device contains a full copy of the entire matrix.
+행렬의 *완전 복제(fully-replicated)* 형태는 샤딩 할당 없이 단순히 $A[I, J]$로 씁니다. 이는 *각* 디바이스가 전체 행렬의 완전한 복사본을 포함함을 의미합니다.
 
 {% include figure.liquid path="assets/img/sharding-colored2.png" class="img-fluid img-small" %}
 
-We can indicate that one of these dimensions has been partitioned across a mesh axis with a subscript mesh axis. For instance $A[I_X, J]$ would mean that the **I** logical axis has been partitioned across the **X** mesh dimension, but that the **J** dimension is *not* partitioned, and the blocks remain *partially-replicated* across the **Y** mesh axis.
+이러한 차원 중 하나가 메시 축에 걸쳐 분할되었음을 나타내고 싶을 때는 메시 축 아래 첨자를 사용합니다. 예를 들어 $A[I_X, J]$는 **I** 논리적 축이 **X** 메시 차원에 걸쳐 분할되었지만, **J** 차원은 분할되지 *않았으며*, 블록이 **Y** 메시 축에 걸쳐 *부분적으로 복제(partially-replicated)*되어 있음을 의미합니다.
 
 {% include figure.liquid path="assets/img/sharding-colored3.png" class="img-fluid img-small" %}
 
-$A[I_X, J_Y]$ means that the **I** logical axis has been partitioned across the **X** mesh axis, and that the **J** dimension has been partitioned across the **Y** mesh axis.
+$A[I_X, J_Y]$ 는 **I** 논리적 축이 **X** 메시 축에 걸쳐 분할되었고, **J** 차원이 **Y** 메시 축에 걸쳐 분할되었음을 의미합니다.
 
 {% include figure.liquid path="assets/img/sharding-colored4.png" class="img-fluid img-small" %}
 
-We illustrate the other possibilities in the figure below:
+아래 그림에서 다른 가능성들을 보여줍니다:
 
 {% include figure.liquid path="assets/img/sharding-colored5.png" class="img-fluid" %}
 
-Here $A[I_{XY}, J]$ means that we treat the **X** and **Y** mesh axes as a larger flattened dimension and partition the **I** named axis across all the devices. The order of the multiple mesh-axis subscripts matters, as it specifies the traversal order of the partitioning across the grid.
+여기서 $A[I_{XY}, J]$ 는 **X**와 **Y** 메시 축을 더 큰 평탄화된 차원으로 취급하고, **I** 이름 있는 축을 모든 디바이스에 걸쳐 분할함을 의미합니다. 여러 메시 축 아래 첨자의 순서는 그리드에 걸친 분할(partitioning)의 순회 순서(traversal order)를 지정하므로 중요합니다.
 
 {% include figure.liquid path="assets/img/sharding-colored6.png" class="img-fluid img-small" %}
 
-Lastly, note that we *cannot* have multiple named axes sharded along the *same* mesh dimension. e.g. $A[I_X, J_X]$ is a nonsensical, forbidden sharding. Once a mesh dimension has been used to shard one dimension of an array, it is in a sense "spent”.
+마지막으로, 여러 이름 있는 축이 *동일한* 메시 차원을 따라 샤딩될 수 *없다*는 점에 유의하세요. 예를 들어 $A[I_X, J_X]$는 의미가 없는 금지된 샤딩입니다. 메시 차원이 배열의 한 차원을 샤딩하는 데 사용되면, 그것은 일종의 "소진된" 상태가 됩니다.
 
-<b markdown=1 style="color: #57cf57;">Pop Quiz:</b> Let **A** be an array with shape `int8[128, 2048]`, sharding $A[I_{XY}, J]$, and mesh `Mesh({‘X': 2, ‘Y': 8, ‘Z': 2})` (so 32 devices total). How much memory does **A** use per device? How much total memory does **A** use across all devices?
+<b markdown=1 style="color: #57cf57;">Pop Quiz:</b> **A**가 `int8[128, 2048]` 형태의 배열이고, 샤딩이 $A[I_{XY}, J]$이며, 메시가 `Mesh({‘X': 2, ‘Y': 8, ‘Z': 2})`(총 32개 디바이스)라고 가정한다면, **A**는 디바이스당 얼마나 많은 메모리를 사용할까요? 모든 디바이스에 걸쳐 총 얼마나 많은 메모리를 사용할까요?
 
-{% details Click here for the answer. %}
+{% details 답을 보려면 여기를 클릭하세요. %}
 
-**Answer:** Our array **A** is sharded over X and Y and replicated over Z, so per device it has shape `int8[128 / (2 * 8), 2048] = int8[8, 2048]`, with size `8 * 2048 = 16,384` bytes. Because it's replicated over Z, while within a Z-plane it's fully sharded over X and Y, there are 2 complete copies of the original array (one per Z-plane). So the total size across all devices is: original array size × Z replicas = 128 * 2048 * 2 = 512 KiB total. Alternatively, we can verify this as: 32 devices × 16,384 bytes per device = 512 KiB total.
+**Answer:** 배열 **A**는 X와 Y에 걸쳐 샤딩되고 Z에 걸쳐 복제되므로, 디바이스당 형태는 `int8[128 / (2 * 8), 2048] = int8[8, 2048]`이며, 크기는 `8 * 2048 = 16,384` 바이트입니다. Z에 걸쳐 복제되므로, X와 Y에 걸쳐 완전히 샤딩된 Z-평면마다 복사본이 하나씩 있고, 그런 평면이 2개 있으므로, 총 크기(모든 디바이스에 걸쳐)는 `128 * 2048 * 2 = 512kiB`입니다.
 
 {% enddetails %}
 
 ### How do we describe this in code?
 
-So far we've avoided talking about code, but now is a good chance for a sneak peek. JAX uses a named sharding syntax that very closely matches the abstract syntax we describe above. We'll talk more about this in [Section 10](../jax-stuff), but here's a quick preview. You can play with this in a Google Colab [here](https://colab.research.google.com/drive/15cxw66eABwZPG-V4QFmbLfiykPFf_gaP?usp=sharing) and profile the result to see how JAX handles different shardings. This snippet does 3 things:
+JAX는 위에서 설명한 추상적인 구문과 매우 유사한 이름 있는 샤딩 구문을 사용합니다. 이에 대해서는 [섹션 10](../jax-stuff)에서 더 자세히 이야기하겠지만, 간단히 미리 살펴보겠습니다. You can play with this in a Google Colab [여기](https://colab.research.google.com/drive/15cxw66eABwZPG-V4QFmbLfiykPFf_gaP?usp=sharing) 에서 이것을 직접 실행해보고 결과를 프로파일링하여 JAX가 다른 샤딩을 어떻게 처리하는지 볼 수 있습니다. 이 스니펫은 3가지 작업을 수행합니다:
 
-1. Creates a **jax.Mesh** that maps our 8 TPUs into a 4x2 grid with names ‘X' and ‘Y' assigned to the two axes.
-2. Creates matrices A and B where A is sharded along both its dimensions and B is sharded along the output dimension.
-3. Compiles and performs a simple matrix multiplication that returns a sharded array.
+1. 8개의 TPU를 'X'와 'Y'라는 이름이 할당된 두 축을 가진 4x2 그리드로 매핑하는 **jax.Mesh**를 생성합니다. 
+2. 행렬 A와 B를 생성하는데, A는 두 차원 모두에 걸쳐 샤딩되고 B는 출력 차원을 따라 샤딩됩니다.
+3. 샤딩된 배열을 반환하는 간단한 행렬 곱셈을 컴파일하고 수행합니다.
 
 ```py
 import jax
@@ -181,22 +179,22 @@ B = jnp.zeros((2048, 8192), dtype=jnp.bfloat16, device=P(None, 'Y'))
 y = jax.jit(lambda A, B: jnp.einsum('BD,DF->BF', A, B), out_shardings=P('X', 'Y'))(A, B)
 ```
 
-The cool thing about JAX is that these arrays behave as if they're unsharded! `B.shape` will tell us the global or logical shape (2048, 8192). We have to actually look at `B.addressable_shards` to see how it's locally sharded. We can perform operations on these arrays and JAX will attempt to figure out how to broadcast or reshape them to perform the operations. For instance, in the above example, the local shape of **A** is `[2, 1024]` and for **B** is `[2048, 4096]`. JAX/XLA will automatically add communication across these arrays as necessary to perform the final multiplication.
+JAX의 멋진 점은 이 배열들이 샤딩되지 않은 것처럼 동작한다는 것입니다! `B.shape`는 전역 또는 논리적 형태(2048, 8192)를 알려줄 것입니다. 로컬로 어떻게 샤딩되었는지 보려면 `B.addressable_shards`를 실제로 봐야 합니다. 이 배열들에 대해 연산을 수행하면 JAX는 연산을 수행하기 위해 어떻게 브로드캐스트하거나 재구성할지 알아서 처리합니다. 예를 들어, 위 예에서 **A**의 로컬 형태는 `[2, 1024]`이고 **B**의 로컬 형태는 `[2048, 4096]`입니다. JAX/XLA는 최종 곱셈을 수행하기 위해 필요에 따라 이 배열들 간의 통신을 자동으로 추가합니다.
 
 ## Computation With Sharded Arrays
 
-If you have an array of data that's distributed across many devices and wish to perform mathematical operations on it, what are the overheads associated with sharding both the data and the computation?
+여러 디바이스에 분산된 데이터 배열이 있고 이에 대해 수학적 연산을 수행하고자 할 때, 데이터와 계산을 모두 샤딩하는 데 관련된 오버헤드는 무엇일까요?
 
-Obviously, this depends on the computation involved.
+당연히, 이것은 관련된 계산에 따라 다릅니다.
 
-* For *elementwise* operations, there is **no overhead** for operating on a distributed array.
-* When we wish to perform operations across elements resident on many devices, things get complicated. Thankfully, for most machine learning nearly all computation takes place in the form of matrix multiplications, and they are relatively simple to analyze.
+* *원소별(elementwise)* 연산의 경우, 분산된 배열에 대해 연산하는 데 **오버헤드가 없습니다**.
+* 여러 디바이스에 상주하는 원소들에 걸쳐 연산을 수행하고자 할 때, 상황은 복잡해집니다. 다행히도, 대부분의 머신러닝에서 거의 모든 계산은 행렬 곱셈 형태로 이루어지며, 이는 비교적 간단하게 분석할 수 있습니다.
 
-The rest of this section will deal with how to multiply sharded matrices. To a first approximation, this involves moving chunks of a matrix around so you can fully multiply or sum each chunk. **Each sharding will involve different communication.** For example, $A[I_X, J] \cdot B[J, K_Y] \to C[I_X, K_Y]$ can be multiplied without any communication because the *contracting dimension* (J, the one we're actually summing over) is unsharded. However, if we wanted the output unsharded (i.e. $A[I_X, J] \cdot B[J, K_Y] \to C[I, K]$), we would either need to copy $A$ and $B$ or $C$ to every device (using an *AllGather*). These two choices have different communication costs, so we need to calculate this cost and pick the lowest one.
+이 섹션의 나머지 부분에서는 샤딩된 행렬을 곱하는 방법을 다룹니다. 대략적으로 말해, 이것은 각 청크를 완전히 곱하거나 합산할 수 있도록 행렬의 청크를 이동시키는 것을 포함합니다. **각 샤딩은 다른 통신을 포함합니다.** 예를 들어, $A[I_X, J] \cdot B[J, K_Y] \to C[I_X, K_Y]$는 *축소 차원*(실제로 합산하는 차원인 J)이 샤딩되지 않았기 때문에 통신 없이 곱셈이 가능합니다. 하지만 출력이 샤딩되지 않기를 원한다면(즉, $A[I_X, J] \cdot B[J, K_Y] \to C[I, K]$), $A$ 또는 $C$를 모든 디바이스에 복사해야 합니다. 이 두 가지 선택은 다른 통신 비용을 가지므로, 이 비용을 계산하고 가장 낮은 것을 선택해야 합니다.
 
-{% details You can think of this in terms of "block matrix multiplication". %}
+{% details 이것을 "블록 행렬 곱셈"으로 생각할 수 있습니다. %}
 
-To understand this, it can be helpful to recall the concept of a "block matrix”, or a nested matrix of matrices:
+먼저 "블록 행렬", 즉 행렬의 중첩된 행렬 개념을 상기해 봅시다:
 
 $$\begin{equation}
 \begin{pmatrix}
@@ -235,7 +233,7 @@ a_{32} & a_{33}
 \end{pmatrix}
 \end{equation}$$
 
-Matrix multiplication has the nice property that when the matrix multiplicands are written in terms of blocks, the product can be written in terms of block matmuls following the standard rule:
+행렬 곱셈은 피곱셈 행렬이 블록으로 작성될 때, 곱이 표준 규칙에 따라 블록 행렬 곱셈으로 작성될 수 있다는 좋은 속성을 가집니다:
 
 $$\begin{equation}
 \begin{pmatrix}
@@ -254,27 +252,27 @@ A_{10}B_{00} + A_{11}B_{10} & A_{10}B_{01} + A_{11}B_{11}
 \end{pmatrix}
 \end{equation}$$
 
-What this means is that implementing distributed matrix multiplications reduces down to moving these sharded blocks over the network, performing *local* matrix multiplications on the blocks, and summing their results. **The question then is what communication to add, and how expensive it is.**
+이것이 의미하는 바는, 분산 행렬 곱셈을 구현하는 것은 이 샤딩된 블록들을 네트워크를 통해 이동시키고, 블록에 대해 *로컬* 행렬 곱셈을 수행하고, 그 결과를 합산하는 것으로 귀결된다는 것입니다. **문제는 어떤 통신을 추가하고, 그것이 얼마나 비싼가입니다.**
 
 {% enddetails %}
 
-Conveniently, we can boil down all possible shardings into roughly 4 cases we need to consider, each of which has a rule for what communication we need to add
-1. **[Case 1](#case-1-neither-multiplicand-has-a-sharded-contracting-dimension):** neither input is sharded along the contracting dimension. _We can multiply local shards without any communication._
-2. **[Case 2](#case-2-one-multiplicand-has-a-sharded-contracting-dimension):** one input has a sharded contracting dimension. _We typically "AllGather" the sharded input along the contracting dimension._
-3. **[Case 3](#case-3-both-multiplicands-have-sharded-contracting-dimensions):** both inputs are sharded along the contracting dimension. _We can multiply the local shards, then "AllReduce" the result._
-4. **[Case 4](#case-4-both-multiplicands-have-a-non-contracting-dimension-sharded-along-the-same-axis):** both inputs have a non-contracting dimension sharded along the same axis. We cannot proceed without AllGathering one of the two inputs first.
+편리하게도, 모든 가능한 샤딩을 우리가 고려해야 할 대략 4가지 경우로 요약할 수 있으며, 각각은 어떤 통신을 추가해야 하는지에 대한 규칙을 가집니다.
+1. **[Case 1](#case-1-neither-multiplicand-has-a-sharded-contracting-dimension):** 어느 피곱셈 행렬도 축소 차원이 샤딩되지 않음. _통신 없이 로컬 샤드를 곱할 수 있습니다._
+2. **[Case 2](#case-2-one-multiplicand-has-a-sharded-contracting-dimension):** 한 피곱셈 행렬에 샤딩된 축소 차원이 있음. _일반적으로 축소 차원을 따라 샤딩된 입력을 "AllGather"합니다._
+3. **[Case 3](#case-3-both-multiplicands-have-sharded-contracting-dimensions):** 두 피곱셈 행렬 모두에 샤딩된 축소 차원이 있음. _로컬 샤드를 곱한 다음, 결과를 "AllReduce"할 수 있습니다._
+4. **[Case 4](#case-4-both-multiplicands-have-a-non-contracting-dimension-sharded-along-the-same-axis):** 두 피곱셈 행렬 모두 동일한 축을 따라 샤딩된 비축소 차원을 가짐. 두 입력 중 하나를 먼저 AllGather하지 않고는 진행할 수 없습니다.
 
-You can think of these as rules that simply need to be followed, but it's also valuable to understand why these rules hold and how expensive they are. We'll go through each one of these in detail now.
+이것들을 단순히 따라야 할 규칙으로 생각할 수도 있지만, 이 규칙들이 왜 성립하고 얼마나 비싼지를 이해하는 것도 가치가 있습니다. 이제 각각을 자세히 살펴보겠습니다.
 
-### Case 1: neither multiplicand has a sharded contracting dimension
+### Case 1: 어느 피곱셈 행렬도 샤딩된 축소 차원을 가지지 않음
 
-**Lemma:** when multiplying sharded matrices, the computation is valid and the output follows the sharding of the inputs *unless* the contracting dimension is sharded or both matrices are sharded along the same axis. For example, this works fine
+**Lemma:** 분할된 텐서를 곱할 때, 계산은 유효하며 출력은 입력의 샤딩을 따릅니다. *단, 축소 차원이 샤딩되거나 두 텐서 모두 동일한 축을 따라 샤딩된 비축소 차원을 가지는 경우는 예외입니다.* 예를 들어, 다음은 잘 작동합니다.
 
 $$\begin{equation*}
 \mathbf{A}[I_X, J] \cdot \mathbf{B}[J, K_Y] \rightarrow \mathbf{C}[I_X, K_Y]
 \end{equation*}$$
 
-with no communication whatsoever, and results in a tensor sharded across both the X and Y hardware dimensions. Try to think about why this is. Basically, the computation is *independent* of the sharding, since each batch entry has some local chunk of the axis being contracted that it can multiply and reduce. Any of these cases work fine and follow this rule:
+전혀 통신 없이, 그리고 결과는 X와 Y 하드웨어 차원 모두에 걸쳐 샤딩된 텐서가 됩니다. 왜 그런지 생각해보세요. 기본적으로, 계산은 샤딩과 *독립적*입니다. 왜냐하면 각 배치 항목은 곱하고 축소할 수 있는 축소 중인 축의 로컬 청크를 가지고 있기 때문입니다. 다음 사례들 중 어떤 것이든 잘 작동하며 이 규칙을 따릅니다:
 
 $$\begin{align*}
 \mathbf{A}[I, J] \cdot \mathbf{B}[J, K] \rightarrow &\ \mathbf{C}[I, K] \\
@@ -283,31 +281,27 @@ $$\begin{align*}
 \mathbf{A}[I_X, J] \cdot \mathbf{B}[J, K_Y] \rightarrow &\ \mathbf{C}[I_X, K_Y]
 \end{align*}$$
 
-Because neither **A** nor **B** has a sharded contracting dimension **J**, we can simply perform the local block matrix multiplies of the inputs and the results will *already* be sharded according to the desired output shardings. When both multiplicands have non-contracting dimensions sharded along the same axis, this is no longer true (see the [invalid shardings](#case-4-both-multiplicands-have-a-non-contracting-dimension-sharded-along-the-same-axis) section for details).
+**A**나 **B** 모두 샤딩된 축소 차원 **J**를 가지지 않으므로, 입력의 로컬 블록 행렬 곱셈을 수행하기만 하면 결과는 *이미* 원하는 출력 샤딩에 따라 샤딩되어 있습니다. 두 피곱셈 행렬 모두 동일한 축을 따라 샤딩된 비축소 차원을 가질 때는 이것이 더 이상 사실이 아닙니다([invalid shardings(유효하지 않은 샤딩)](#case-4-both-multiplicands-have-a-non-contracting-dimension-sharded-along-the-same-axis) 섹션 참조).
 
-### Case 2: one multiplicand has a sharded contracting dimension
+### Case 2: 한 피곱셈 행렬이 샤딩된 축소 차원을 가짐
 
-Let's consider what to do when one input **A** is sharded along the contracting **J** dimension and **B** is fully replicated:
+축소 **J** 차원에서 샤딩된 **A**와 완전 복제된 **B**의 분산 행렬 곱셈의 간단한 경우를 고려해 봅시다:
 
 $$\mathbf{A}[I, J_X] \cdot \mathbf{B}[J, K] \rightarrow \mathbf{C}[I, K]$$
 
-We cannot simply multiply the local chunks of **A** and **B** because we need to sum over the full contracting dimension of **A**, which is split across the X axis. Typically, we first "**AllGather**" the shards of **A** so every device has a full copy, and only then multiply against **B:**
+로컬 **A**, **B** 블록을 서로 곱하는 로컬 행렬 곱셈을 단순히 수행할 수 없습니다. **A**의 축소 축에서 전체 데이터가 없기 때문입니다. 일반적으로, 먼저 **A**의 샤드를 로컬에서 "**AllGather**"한 다음, **B**와 곱합니다:
 
 $$\textbf{AllGather}_X[I, J_X] \rightarrow \mathbf{A}[I, J]$$
 
 $$\mathbf{A}[I, J] \cdot \mathbf{B}[J, K] \rightarrow \mathbf{C}[I, K]$$
 
-This way the actual multiplication can be done fully on each device.
-
-<p markdown=1 class="takeaway">**Takeaway:** When multiplying matrices where one of the matrices is sharded along the contracting dimension, we generally AllGather it first so the contraction is no longer sharded, then do a local matmul.</p>
-
-Note that when **B** is not also sharded along X, we could also do the local partial matmul and then sum (or *AllReduce*) the sharded partial sums, which can be faster in some cases. See Question 4 [below](#some-problems-to-work).
-
-**What is an AllGather?** An AllGather is the first core [MPI](https://en.wikipedia.org/wiki/Message_Passing_Interface) communication primitive we will discuss. An AllGather *removes the sharding* along an axis and reassembles the shards spread across devices onto *each* device along that axis. Using the notation above, an AllGather removes a subscript from a set of axes, e.g.
+AllGather는 축을 따라 *샤딩을 제거*하고 디바이스에 걸쳐 퍼져 있는 샤드를 해당 축을 따라 *각* 디바이스에 재조립합니다. 위 표기법을 사용하면, AllGather는 축 집합에서 아래 첨자를 제거합니다. 예:
 
 $$\textbf{AllGather}_{XY}(A[I_{XY}, J]) \rightarrow A[I, J]$$
 
-We don't have to remove all subscripts for a given dimension, e.g. $$A[I_{XY}, J] \rightarrow A[I_Y, J]$$ is also an AllGather, just over only a single axis. Also note that we may also wish to use an AllGather to remove *non-contracting* dimension sharding, for instance in the matrix multiply:
+주어진 차원에 대해 모든 아래 첨자를 제거할 필요는 없습니다. 예: $$A[I_{XY}, J] \rightarrow A[I_Y, J]$$ 도 단일 축에 대한 AllGather입니다.
+
+*non-contracting(비축소)* 차원 샤딩을 제거하기 위해 AllGather를 사용할 수도 있습니다. 예를 들어, 행렬 곱셈:
 
 $$A[I_X, J] \cdot B[J, K] \rightarrow C[I, K]$$
 
@@ -315,80 +309,84 @@ We could either AllGather **A** initially to remove the input sharding, or we ca
 
 **How is an AllGather actually performed?** To perform a 1-dimensional AllGather around a single TPU axis (a ring), we basically have each TPU pass its shard around a ring until every device has a copy.<d-footnote>A GPU AllGather can also work like this, where you create a ring out of the GPUs in a node and pass the chunks around in that (arbitrary) order.</d-footnote> Here is an animation:
 
-{% include figure.liquid path="assets/img/all-gather.gif" caption="<b>Figure:</b> An animation showing how to perform an AllGather around a set of 8 TPU or GPU devices. Each device starts with 1 / 8th of the array and ends up with a full copy." %}
+출력 샤딩을 제거하기 위해 유사하게 **X**를 따라 AllGather를 수행할 수 있습니다. 하지만 축소 차원을 AllGather하는 경우와는 달리, 이 경우에는 행렬 곱셈을 수행하기 전이나 후에 AllGather를 할 수 있습니다. 축소 차원은 반드시 행렬 곱셈을 수행하기 전에 AllGather해야 합니다.
+
+**AllGather는 실제로 어떻게 수행될까요?** 단일 축을 따라 AllGather를 수행하려면, 모든 디바이스가 복사본을 가질 때까지 모든 샤드를 축 주위로 전달해야 합니다. Figure 1은 한 예시를 보여줍니다. 8개의 각 디바이스는 배열의 1/8로 시작하여 모든 복사본으로 끝납니다. 이를 효율적으로 수행하는 한 가지 방법은 각 디바이스가 sharding dimension ring 주위로 자신의 샤드를 한 방향 또는 양방향으로 전달하는 것입니다. 한 방향으로 하면 링크당 $$\text{total size} / N$$ 크기의 홉이 $$N - 1$$번 필요하고, 양방향으로 하면 링크당 $$2 \cdot \text{total size} / N$$ 크기의 홉이 $\lceil \frac{N}{2} \rceil$ 번 필요합니다.
 
 We can either do an AllGather in one direction or both directions (two directions is shown above). If we do one direction, each TPU sends chunks of size $\text{bytes} / N$ over $N - 1$ hops around the ring. If we do two directions, we have $\lfoor \frac{N}{2} \rfloor$ hops of size $2 \cdot \text{bytes} / N$.
 
-**How long does this take?** Let's take the bidirectional AllGather and calculate how long it takes. Let $$V$$ be the number of bytes in the array, and $X$ be the number of shards on the contracting dimension. Then from the above diagram, each hop sends $V / \lvert X\rvert$ bytes in each direction, so each hop takes
+**이것은 얼마나 오래 걸릴까요?** 양방향 AllGather를 예로 들어 얼마나 오래 걸리는지 계산해 봅시다. $$V$$를 배열의 바이트 수, $$\lvert X\rvert$$를 축소 차원의 샤드 수라고 합시다. 위 다이어그램에서 각 홉은 각 방향으로 $V / \lvert X\rvert$ 바이트를 보내므로, 각 홉은 다음과 같은 시간이 걸립니다.
 
 $$T_{hop} = \frac{2 \cdot V}{X \cdot W_\text{ici}}$$
 
-where $W_\text{ici}$ is the **bidirectional** ICI bandwidth.<d-footnote>The factor of 2 in the numerator comes from the fact that we're using the bidirectional bandwidth. We send $V / X$ in each direction, or $2V / X$ total.</d-footnote> We need to send a total of $\lvert X\rvert / 2$ hops to reach every TPU<d-footnote>technically, $\lfloor X / 2 \rfloor$</d-footnote>, so the total reduction takes
+여기서 $$W_\text{ici}$$는 **양방향(bidirectional)** ICI 대역폭입니다.<d-footnote>분자의 2는 양방향 대역폭을 사용하고 있다는 사실에서 비롯됩니다. 각 방향으로 $V / |X|$를 보내므로 총 $2V / |X|$를 보냅니다.</d-footnote> 모든 TPU에 도달하기 위해 총 $\lvert X\rvert / 2$ 홉을 보내야 하므로<d-footnote>기술적으로는 $\lceil | X | / 2 \rceil$</d-footnote>, 전체 축소에는 다음과 같은 시간이 걸립니다.
 
 $$T_{total} = \frac{2 \cdot V \cdot X}{2 \cdot X \cdot W_\text{ici}}$$
 
 $$T_{total} = \frac{V}{W_\text{ici}}$$
 
-Note that this **doesn't depend on $X$!** That's kind of striking, because it means even though our TPUs are only locally connected, the locality of the connections doesn't matter. We're just bottlenecked by the speed of each link.
+이것이 **$$\lvert X\rvert$$에 의존하지 않는다는 점에 유의하세요!** 이는 꽤 놀라운 사실인데, 왜냐하면 우리 TPU가 로컬로만 연결되어 있음에도 불구하고 연결의 지역성이 중요하지 않다는 것을 의미하기 때문입니다. 우리는 단지 각 링크의 속도에 의해 병목 현상을 겪습니다.
 
-<p markdown=1 class="takeaway">**Takeaway:** when performing an AllGather (or a ReduceScatter or AllReduce) in a throughput-bound regime, the actual communication time depends only on the size of the array and the available bandwidth, not the number of devices over which our array is sharded!</p>
+<p markdown=1 class="takeaway">**Takeaway:** throughput-bound 환경에서 AllGather(또는 ReduceScatter나 AllReduce)를 수행할 때, 실제 통신 시간은 배열이 샤딩된 디바이스의 수가 아니라 배열의 크기와 사용 가능한 대역폭에만 의존합니다!</p>
 
-**A note on ICI latency:** Each hop over an ICI link has some intrinsic overhead regardless of the data volume. This is typically around 1us. This means when our array $$A$$ is very small and each hop takes less than 1us, we can enter a "latency-bound" regime where the calculation _does_ depend on $X$.
+**ICI 지연 시간에 대한 참고 사항:** ICI 링크를 통한 각 홉은 데이터 양과 관계없이 고유한 오버헤드를 가집니다. 이는 보통 약 1us입니다. 이는 배열 $$A$$가 매우 작고 각 홉이 1us 미만으로 걸릴 때, 계산이 $$\lvert X \rvert$$에 _의존하는_ "지연 시간 제한적인(latency-bound)" 환경에 들어갈 수 있음을 의미합니다.
 
-{% details For the full details, click here. %}
+{% details 자세한 내용은 여기를 클릭하세요. %}
 
-Let $$T_\text{min}$$ be the minimum time for a single hop. Then
+$$T_\text{min}$$ 을 단일 홉의 최소 시간이라고 합시다. 이 경우에
 
 $$T_{hop} = \max \left[ T_{min}, \frac{2 \cdot V}{X \cdot W_\text{ici}} \right]$$
 
 $$T_{total} = \max \left[ \frac{T_{min} \cdot X}{2}, \frac{V}{W_\text{ici}} \right]$$
 
-since we perform $X / 2$ hops. For large reductions or gathers, we're solidly bandwidth bound. We're sending so much data that the overhead of each hop is essentially negligible. But for small arrays (e.g. when sampling from a model), this isn't negligible, and the ICI bandwidth isn't relevant. We're bound purely by latency. Another way to put this is that given a particular TPU, e.g. TPU v5e with `4.5e10` unidirectional ICI bandwidth, sending any buffer under `4.5e10 * 1e-6 = 45kB` will be latency bound.
+이 됩니다. 왜냐하면 우리는 $$\lvert X \rvert / 2$$ 홉을 수행하기 때문입니다. 큰 축소나 수집의 경우, 우리는 확실히 대역폭 제한적입니다. 너무 많은 데이터를 보내고 있어서 각 홉의 오버헤드는 거의 무시할 수 있습니다. 하지만 작은 배열(예: 모델에서 샘플링할 때)의 경우, 이는 무시할 수 없으며 ICI 대역폭은 관련이 없습니다. 우리는 순수하게 지연 시간에 의해 제한됩니다. 다른 말로 하면, 특정 TPU(예: `4.5e10` 단방향 ICI 대역폭을 가진 TPU v5e)가 주어졌을 때, `4.5e10 * 1e-6 = 45kB` 미만의 버퍼를 보내는 것은 지연 시간 제한적이 될 것입니다.
 
 {% enddetails %}
 
-Here is an empirical measurement of AllGather bandwidth on a TPU v5e 8x16 slice. The array is sharded across the 16 axis so it has a full bidirectional ring.
+다음은 TPU v5e 8x16 슬라이스에서 AllGather 대역폭을 실증적으로 측정한 것입니다. 배열은 16개 축에 걸쳐 샤딩되어 완전한 양방향 링을 가집니다.
 
-{% include figure.liquid path="assets/img/all-gather-bandwidth.png" class="img-small" caption="<b>Figure:</b> empirical bandwidth and estimated link bandwidth for TPU v5e during an AllGather. BW in orange is the actual bytes per second AllGathered, while the blue curve shows the empirical unidirectional link bandwidth calculated according to the known cost of the collective." %}
+{% include figure.liquid path="assets/img/all-gather-bandwidth.png" class="img-small" caption="<b>Figure:</b> AllGather 중 TPU v5e의 실증적 대역폭 및 추정 링크 대역폭. 주황색 BW는 AllGather된 실제 초당 바이트 수이며, 파란색 곡선은 집합 연산의 알려진 비용에 따라 계산된 실증적 단방향 링크 대역폭을 보여줍니다." %}
 
-Note that we not only achieve about 95% of the peak claimed bandwidth (`4.5e10`) but also that we achieve this peak at about 10MB, which when 16-way sharded gives us about 500kB per device (*aside*: this is much better than GPUs).
+주장된 최대 대역폭(`4.5e10`)의 약 95%만 달성하고, 이 최대치를 약 10MB에서만 달성한다는 점에 유의하세요. 16방향으로 샤딩되면 디바이스당 약 500kB가 됩니다.
 
-**What happens when we AllGather over multiple axes?** When we gather over multiple axes, we have multiple dimensions of ICI over which to perform the gather. For instance, AllGather<sub>XY</sub>([B, D<sub>XY</sub>]) operates over two hardware mesh axes. This increases the available bandwidth by a factor of $N_\text{axes}$.
+**여러 축에 걸쳐 AllGather를 수행하면 어떻게 될까요?** 여러 축에 걸쳐 수집할 때, 우리는 수집을 수행할 여러 차원의 ICI를 가집니다. 예를 들어, AllGather<sub>XY</sub>([B, D<sub>XY</sub>])는 두 개의 하드웨어 메시 축에 걸쳐 작동합니다. 이는 사용 가능한 대역폭을 $$n_\text{axes}$$ 배만큼 증가시킵니다.
 
-When considering latency, we end up with the general rule:
+{% details 자세한 내용은 여기를 클릭하세요. %}
 
-$$T_{total} = \max \left[ \frac{T_{min} \cdot \sum_{i} |X_i|}{2}, \frac{V}{W_\text{ici} \cdot N_\text{axes}} \right]$$
+일반적으로 우리는
 
-where $$\sum_i \lvert X_i \rvert / 2$$ is the length of the longest path in the TPU mesh.
+$$T_{total} = \max \left[ \frac{T_{min} \cdot \sum_{i} |X_i|}{2}, \frac{V}{W_\text{ici} \cdot n_\text{axes}} \right]$$
 
-<b markdown=1 style="color:rgb(144, 92, 255);">Pop Quiz 2 [AllGather time]:</b> Using the numbers from [Part 2](../tpus), how long does it take to perform the AllGather<sub>Y</sub>([E<sub>Y</sub>, F]) → [E, F] on a TPUv5e with a 2D mesh `{'X': 8, 'Y': 4}`, $$E = 2048$$, $$F = 8192$$ in bfloat16? What about with $$E=256, F=256$$?
-
-{% details Click here for the answer. %}
-
-**Answer:** Let's start by calculating some basic quantities:
-
-1) TPU v5e has 4.5e10 bytes/s of unidirectional ICI bandwidth for each of its 2 axes.
-2) In bfloat16 for (a), we have $A[E_Y, F]$ so each device holds an array of shape bfloat16[512, 8192] which has 512 * 8192 * 2 = 8.4MB. The total array has size 2048 * 8192 * 2 = 34MB.
-
-*For part (1)*, we can use the formula above. Since we're performing the AllGather over one axis, we have $T_{\text{comms}} = \text{34e6} / \text{9e10} = \text{377us}$. To check that we're not latency-bound, we know over an axis of size 4, we'll have at most 3 hops, so our latency bound is something like 3us, so we're not close. However, TPU v5e only has a wraparound connection when one axis has size 16, so here *we actually can't do a fully bidirectional AllGather*. We have to do 3 hops for data from the edges to reach the other edge, so in theory we have more like $T_{\text{comms}} = 3 * \text{8.4e6} / \text{4.5e10} = 560\mu s$. [**Here's**](https://imgur.com/a/RkvpRGQ) **an actual profile** from [this Colab](https://colab.research.google.com/drive/15tDZMfNqm2vJjvSzw5VC9qtSwc5td-oV?usp=sharing), which shows $680 \mu s$, which is reasonable since we're likely not getting 100% of the theoretical bandwidth! *For part (2)* each shard has size `64 * 256 * 2 = 32kB. 32e3 / 4.5e10 = 0.7us`, so we're latency bound. Since we have 3 hops, this will take roughly 3 * 1us = 3us. [In practice, it's closer to 8us.](https://imgur.com/a/HZLQmYs)
+를 가집니다. 여기서 $$\sum_i \lvert X_i \rvert / 2$$는 TPU 메시에서 가장 긴 경로의 길이입니다.
 
 {% enddetails %}
 
-<p markdown=1 class="takeaway">**Note:** when we have a 2D mesh like `{'X': 16, 'Y': 4}`, it is not necessary for each axis to correspond to a specific _hardware_ axis. This means for instance the above could describe a 4x4x4 TPU v5p cube with 2 axes on the $X$ axis. This will come into play later when we describe data parallelism over multiple axes.</p>
+<b markdown=1 style="color:rgb(144, 92, 255);">Pop Quiz 2 [AllGather time]:</b> [파트 2](../tpus)의 수치를 사용하여, 2D 메시 `{'X': 8, 'Y': 4}`를 가진 TPUv5e에서 $$E = 2048$$, $$F = 8192$$인 bfloat16의 AllGather<sub>Y</sub>([E<sub>Y</sub>, F]) → [E, F]를 수행하는 데 얼마나 걸릴까요? $$E=256, F=256$$일 때는 어떨까요?
 
-### Case 3: both multiplicands have sharded contracting dimensions
+{% details 답을 보려면 여기를 클릭하세요. %}
 
-The third fundamental case is when both multiplicands are sharded on their contracting dimensions, along the same mesh axis:
+**Answer:** 몇 가지 기본 수를 계산하는 것으로 시작하겠습니다:
+
+1) TPU v5e는 2개의 각 축에 대해 초당 4.5e10 바이트의 단방향 ICI 대역폭을 가집니다.
+2) (a)의 bfloat16에서, 우리는 $A[E_Y, F]$를 가지므로 각 디바이스는 bfloat16[512, 8192] 형태의 배열을 보유하며, 이는 512 * 8192 * 2 = 8.4MB의 크기를 가집니다. 전체 배열의 크기는 2048 * 8192 * 2 = 34MB입니다.
+
+*파트 (1)의 경우*, 위 공식을 사용할 수 있습니다. 한 축에 대해서만 AllGather를 수행하므로, $T_{\text{comms}} = 34e6 / 9e10 = 377\mu s$입니다. latency bound인지 확인하기 위해, 크기 4의 축에서는 최대 3개의 홉이 있으므로 지연 시간 한계는 약 3us 정도이므로 근접하지 않습니다. 하지만 TPU v5e는 한 축의 크기가 16일 때만 랩어라운드 연결을 가지므로, 여기서는 *실제로 완전한 양방향 AllGather를 할 수 없습니다*. 가장자리에서 다른 가장자리로 데이터가 도달하려면 3개의 홉이 필요하므로, 이론적으로는 $T_{\text{comms}} = 3 * 8.4e6 / 4.5e10 = 560\mu s$에 가깝습니다. [이 Colab](https://colab.research.google.com/drive/15tDZMfNqm2vJjvSzw5VC9qtSwc5td-oV?usp=sharing)의 [**실제 프로파일**](https://imgur.com/a/RkvpRGQ) 은 $680 \mu s$를 보여주는데, 이는 이론적 대역폭의 100%를 얻지 못할 가능성이 높기 때문에 합리적입니다! *파트 (2)의 경우* 각 샤드의 크기는 `64 * 256 * 2 = 32kB`입니다. `32e3 / 4.5e10 = 0.7us`이므로, 우리는 latency bound입니다. 3개의 홉이 있으므로, 대략 3 * 1us = 3us가 걸릴 것입니다. [실제로는 8us에 가깝습니다.](https://imgur.com/a/HZLQmYs)
+
+{% enddetails %}
+
+### Case 3: 두 피연산자 모두 축소 차원이 분할된 경우
+
+세 번째 기본 경우는 두 피연산자 모두 동일한 메시 축을 따라 축소 차원에 샤딩된 경우입니다:
 
 $$\textbf{A}[I, J_X] \cdot \textbf{B}[J_X, K] \rightarrow C[I, K]$$
 
-In this case the *local* sharded block matrix multiplies are at least *possible* to perform, since they will share the same sets of contracting indices. But each product will only represent a *partial sum* of the full desired product, and each device along the **X** dimension will be left with different *partial sums* of this final desired product.  This is so common that we extend our notation to explicitly mark this condition:
+이 경우, *로컬* 분할된 블록 행렬 곱셈은 동일한 축소 인덱스 집합을 공유하므로 최소한 수행이 *가능*합니다. 하지만 각 곱은 원하는 전체 곱의 *부분 합*만을 나타낼 것이며, **X** 차원을 따르는 각 디바이스는 이 최종 원하는 곱의 다른 *부분 합*을 가지게 될 것입니다. 이는 매우 흔한 경우이므로, 이 조건을 명시적으로 표시하기 위해 표기법을 확장합니다:
 
 $$\textbf{A}[I, J_X] \cdot_\text{LOCAL} \textbf{B}[J_X, K] \rightarrow C[I, K] \{\ U_X \}$$
 
-The notation **{ U<sub>X</sub> }** reads "**unreduced** along X mesh axis” and refers to this status of the operation being "incomplete” in a sense, in that it will only be finished pending a final sum. The $\cdot_\text{LOCAL}$ syntax means we perform the local sum but leave the result unreduced.
+**{ U\<sub\>X\</sub\> }** 표기법은 "X 메시 축에 대해 **축소되지 않음(unreduced)**"으로 읽으며, 연산이 최종 합산이 보류된 채 "미완성" 상태임을 의미합니다. $\cdot_\text{LOCAL}$ 구문은 로컬 합계를 수행하지만 결과를 축소되지 않은 상태로 남겨둔다는 것을 의미합니다.
 
-This can be seen as the following result about matrix multiplications and outer products:
+이는 행렬 곱셈과 외적(outer product)에 대한 다음 결과로 볼 수 있습니다:
 
 $$A \cdot B = \sum_{i=1}^{P} \underbrace{A_{:,i} \otimes B_{i,:}}_{\in \mathbb{R}^{n \times m}}$$
 
@@ -579,7 +577,7 @@ $$T_{\text{comm per AllGather or ReduceScatter}} = \frac{\text{Data volume}}{\te
 
 **Question 1 [replicated sharding]**: An array is sharded $A[I_X, J, K, \ldots]$ (i.e., only sharded across $X$), with a mesh `Mesh({'X': 4, 'Y': 8, 'Z': 2})`.  What is the ratio of the total number of bytes taken up by $A$ across all chips to the size of one copy of the array?
 
-{% details Click here for the answer. %}
+{% details 답을 보려면 여기를 클릭하세요. %}
 
 Our array is only sharded along X, which has size 4, so effectively each shard has size $[I / 4, J, K, \ldots] = \text{sizeof}(A) / 4$. Since our array is replicated across Y and Z, the total size is $Y \cdot Z \cdot \text{sizeof}(A)$, so the ratio of total size to single chip size is $Y \cdot Z \cdot \text{sizeof}(A) / \text{sizeof}(A) = 16$.
 
@@ -587,7 +585,7 @@ Our array is only sharded along X, which has size 4, so effectively each shard h
 
 **Question 2 [AllGather latency]**: How long should $\text{AllGather}_X([B_X, D_Y])$ take on a TPUv4p 4x4x4 slice with mesh `Mesh({'X': 4, 'Y': 4, 'Z': 4})` if $B=1024$ and $D=4096$ in bfloat16? How about $$\text{AllGather}_{XY}([B_X, D_Y])$$? How about $$\text{AllReduce}_Z([B_X, D_Y] \{U_Z \})$$?
 
-{% details Click here for the answer. %}
+{% details 답을 보려면 여기를 클릭하세요. %}
 
 We have a wraparound link on all axes because we have a full `4x4x4` cube, so we have 9e10 bidirectional bandwidth to work with.
 
@@ -601,7 +599,7 @@ We have a wraparound link on all axes because we have a full `4x4x4` cube, so we
 
 **Question 3 [latency-bound AllGather]**: Let's say we're performing an $\text{AllGather}_X([B_X])$ but $B$ is very small (say 128). How long should this take on a TPUv4p 4x4x4 slice with mesh `Mesh({'X': 4, 'Y': 4, 'Z': 4})` in bfloat16? *Hint: you're probably latency bound.*
 
-{% details Click here for the answer. %}
+{% details 답을 보려면 여기를 클릭하세요. %}
 
 Our array in bfloat16 uses only 256 bytes total, and only 64 per device. Since we have an axis of size 4 on a TPU v4p, we have a wraparound link, so we can send the array in both directions. With `4.5e10` of unidirectional bandwidth, each hop would take roughly `64 / 4.5e10 ~ 0`, so we're definitely latency bound. Counting the number of hops, we can do the full gather in only 2 hops, so roughly 2us a good estimate.
 
@@ -609,7 +607,7 @@ Our array in bfloat16 uses only 256 bytes total, and only 64 per device. Since w
 
 **Question 4 [matmul strategies]**: To perform $X[B, D] \cdot_D Y[D_X, F] \to Z[B, F]$, in this section we tell you to perform $\text{AllGather}_X(Y[D_X, F])$ and multiply the fully replicated matrices (Case 2, *Strategy 1*). Instead, you could multiply the local shards like $X[B, D_X] \cdot_D Y[D_X, F] \to Z[B, F] \\{U_X\\}$ (Case 4, *Strategy 2*), and then $\text{AllReduce}_X(Z[B, F] \\{ U_X\\})$. How many FLOPs and comms does each of these perform? Which is better and why?
 
-{% details Click here for the answer. %}
+{% details 답을 보려면 여기를 클릭하세요. %}
 
 Let's start with our baseline (*Strategy 1*). As we've shown, the cost of the AllGather is $2DF / W_\text{ici}$. Once we have the fully replicated arrays, the total compute time is $2BDF / C$ (where $C$ is our accelerator FLOPs/s, since each TPU does the same FLOPs). So we have
 
@@ -681,7 +679,7 @@ Answer the following:
 2. Now suppose you are ok with the final result not being replicated on each device, but instead sharded (across either the N or K dimension).  How would the algorithm above change?
 3. Looking purely at the communication cost of the strategy above (in part (b), not (a)), how does this communication cost compare to the communication cost of the algorithm in which we first AllGather A and then do the matmul?
 
-{% details Click here for the answer. %}
+{% details 답을 보려면 여기를 클릭하세요. %}
 
 
 1. First compute the outer products, storing the result in $$O[N, K]: o_{kj} = \sum_i a_{ki} b_{ij}$$. Note that the repeated index is not the one being contracted, as we are doing an outer product. Here the sum ranges across the set of i values stored on the particular device we are using. So, for example, if we have a contracting axis of size 16, and 4 devices, then on device 0, i would range from {0, 1, 2, 3}; on device 1, i would range from {4, 5, 6, 7}; on device 2, i would range from {8, 9, 10, 11}; and on device 3, i would range from {12, 13, 14, 15}. Then AllReduce the partial-sums of $O[N, K]$ which live on each device, to form the full $O[N, K]$.
@@ -699,7 +697,7 @@ Answer the following:
 5. How does adding bidirectional communication affect the total time needed in the AllToAll case?
 6. Now simply explain the ratio between AllGather time and AllToAll time in a bidirectional ring.
 
-{% details Click here for the answer. %}
+{% details 답을 보려면 여기를 클릭하세요. %}
 
 (1) **Solution:** The process is simple: in each step of the algorithm, each device will send a single-shard "strip” of the matrix (totalling $$\frac{N}{D} \times N$$ elements in size) to its nearest neighbor. This occurs $$D-1$$ times, since each shard needs to be communicated to all of the devices except the one it starts out on. So in total, $$\frac{N^2(D-1)}{D}$$ scalars are transferred by each device, i.e. flow across a single ICI link.
 
