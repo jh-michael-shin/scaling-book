@@ -309,9 +309,7 @@ $\frac{6.7e7 + 2e4\cdot B}{8.1e11} < \frac{1.3e8 \cdot B}{3.94e14}$일 때, 즉 
 
 {% enddetails %}
 
-<h3 markdown=1 class="next-section">That's it for Part 2! For Part 3, covering partitioning and cross-TPU communication, [click here](../sharding).</h3>
-
-<h3 markdown=1 class="next-section">파트 2는 여기까지입니다! 파티셔닝과 교차 TPU 통신을 다루는 파트 3을 보려면, [여기를 클릭하세요](../sharding).</h3>
+<h3 markdown=1 class="next-section">파트 2는 여기까지입니다! 파티셔닝과 cross-TPU 통신을 다루는 파트 3을 보려면, [여기를 클릭하세요](../sharding).</h3>
 
 ## Appendix
 
