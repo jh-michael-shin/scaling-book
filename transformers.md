@@ -118,7 +118,6 @@ $$
 - 이 $$x \cdot y$$의 내적(dot product)은 $$P$$개의 _덧셈_과 _곱셈_, 즉 총 $$2P$$개의 부동소수점 연산(FLOPs)을 필요로 합니다.
 - 행렬-벡터 곱 $$Ax$$는 $$A$$의 행을 따라 $$N$$개의 내적을 수행하므로 $$2NP$$ FLOPs가 필요합니다. 
 - 행렬-행렬 곱 $$AB$$는 $$B$$의 각 열에 대해 $$M$$개의 행렬-벡터 곱을 수행하므로 총 $$2NPM$$ FLOPs가 필요합니다. 
-- 일반적으로, 일부 차원이 <span style="color:red">축약(CONTRACTING)</span>
 - 일반적으로, 일부 차원이 <span style="color:red">축약(CONTRACTING)</span>되고 일부는 <span style="color:blue">배치(BATCHING)</span>되는 고차원 배열 $$C$$와 $$D$$가 있다면(예: $$C[\blue{GH}IJ\red{KL}], D[\blue{GH}MN\red{KL}]$$), 이 축약의 FLOPs 비용은 배치 및 축약 차원을 한 번만 계산한 모든 $$C$$와 $$D$$차원의 곱에 2를 곱한 값입니다(예:$$2\blue{GH}IJMN\red{KL}$$). 한 차원이 배치되려면 두 피연산자 모두에 나타나야 합니다. (또한, 축약 차원이 없고 이것이 단지 원소별 곱셈일 경우에는 2의 계수가 적용되지 않습니다.) 
 
 $$
