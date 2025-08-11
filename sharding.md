@@ -390,179 +390,141 @@ $$\textbf{A}[I, J_X] \cdot_\text{LOCAL} \textbf{B}[J_X, K] \rightarrow C[I, K] \
 
 $$A \cdot B = \sum_{i=1}^{P} \underbrace{A_{:,i} \otimes B_{i,:}}_{\in \mathbb{R}^{n \times m}}$$
 
-where ⊗ is the outer product. Thus, if TPU **i** on axis **X** has the **i**th column of **A**, and the **i**th row of **B**, we can do a local matrix multiplication to obtain $$A_{:,i} \otimes B_{i,:} \in \mathbb{R}_{n\times m}$$. This matrix has, in each entry, the **i**th term of the sum that **A • B** has at that entry. We still need to perform that sum over **P**, which we sharded over mesh axis **X**, to obtain the full **A • B**. This works the same way if we write **A** and **B** by blocks (i.e. shards), and then sum over each resulting shard of the result.
+여기서 ⊗는 외적(outer product)입니다. 따라서, 축 **X**의 TPU **i**가 **A**의 **i**번째 열과 **B**의 **i**번째 행을 가지고 있다면, 로컬 행렬 곱셈을 수행하여 $$A_{:,i} \otimes B_{i,:} \in \mathbb{R}_{n\times m}$$을 얻을 수 있습니다. 이 행렬의 각 항목에는 **A • B**가 해당 항목에서 가지는 합의 **i**번째 항이 포함됩니다. 전체 **A • B**를 얻으려면 메시 축 **X**에 걸쳐 샤딩한 **P**에 대해 여전히 합산을 수행해야 합니다. 이는 **A**와 **B**를 블록(즉, 샤드)으로 쓰고 결과의 각 샤드에 대해 합산하는 것과 동일한 방식으로 작동합니다.
 
-We can perform this summation using a full **AllReduce** across the **X** axis to remedy this:
+이를 완화하기 위해 **X** 축에 걸쳐 전체 **AllReduce**를 사용하여 이 합산을 수행할 수 있습니다:
 
 $$\begin{align*}
 A[I, J_X] \cdot_\text{LOCAL} B[J_X, K] \rightarrow &\ C[I, K] \{ U_X \} \\
 \textbf{AllReduce}_X C[I, K] \{ U_X \} \rightarrow &\ C[I, K]
 \end{align*}$$
 
-AllReduce removes partial sums, resulting in *each* device along the axis having the same fully-summed value. AllReduce is the second of several key communications we'll discuss in this section, the first being the AllGather, and the others being ReduceScatter and AllToAll. An AllReduce takes an array with an unreduced (partially summed) axis and performs the sum by passing those shards around the unreduced axis and accumulating the result. The signature is
+AllReduce는 부분 합(partial sums)을 제거하여, 축을 따르는 *각* 디바이스가 동일한 완전히 합산된 값(fully-summed value)을 갖게 합니다. AllReduce는 이 섹션에서 논의할 몇 가지 핵심 통신 중 두 번째이며, 첫 번째는 AllGather, 다른 것들은 ReduceScatter와 AllToAll입니다. AllReduce는 축소되지 않은(부분적으로 합산된) 축을 가진 배열을 가져와 해당 축 주위로 샤드를 전달하고 결과를 누적하여 합산을 수행합니다. 시그니처는 다음과 같습니다.
 
 $$\textbf{AllReduce}_Y A[I_X, J] \{U_Y\} \rightarrow A[I_X, J]$$
 
-This means it simply removes the $\\{U_Y\\}$ suffix but otherwise leaves the result unchanged.
+이는 단순히 $\\{U_Y\\}$ 접미사를 제거하지만 그 외에는 결과를 변경하지 않음을 의미합니다.
 
-**How expensive is an AllReduce?** One mental model for how an AllReduce is performed is that every device sends its shard to its neighbors, and sums up all the shards that it receives. Clearly, this is more expensive than an AllGather because each "shard" has the same shape as the full array. Generally, **an AllReduce is twice as expensive as an AllGather.** One way to see this is to note that an **AllReduce** can be expressed as a composition of two other primitives: a **ReduceScatter** and an **AllGather**. Like an AllReduce, a ReduceScatter resolves partial sums on an array but results in an output 'scattered' or partitioned along a given dimension. AllGather collects all those pieces and 'unpartitions/unshards/replicates' the logical axis along that physical axis.
+**AllReduce는 얼마나 비쌀까요?** AllReduce가 어떻게 수행되는지에 대한 한 가지 멘탈 모델은 모든 디바이스가 자신의 샤드를 이웃에게 보내고, 받는 모든 샤드를 합산하는 것입니다. 분명히, 각 "샤드"가 전체 배열과 동일한 형태를 가지기 때문에 이는 AllGather보다 더 비쌉니다. 일반적으로, **AllReduce는 AllGather보다 두 배 비쌉니다.** 이를 확인하는 한 가지 방법은 **AllReduce**가 다른 두 가지 기본 연산(primitives), 즉 **ReduceScatter**와 **AllGather**의 합성으로 표현될 수 있다는 점을 주목하는 것입니다. AllReduce와 마찬가지로, ReduceScatter는 배열의 부분 합을 해결하지만 주어진 차원을 따라 '흩뿌려진(scattered)' 또는 분할된 출력을 생성합니다. AllGather는 이 모든 조각을 모아 해당 물리적 축을 따라 논리적 축을 'unpartitions/unshards/replicates'합니다.
 
 $$\begin{align*}
 \textbf{ReduceScatter}_{Y,J} : A[I_X,J] \{U_Y\} \rightarrow &\ A[I_X, J_Y] \\
 \textbf{AllGather}_Y : A[I_X, J_Y] \rightarrow &\ A[I_X, J]
 \end{align*}$$
 
-**What about a ReduceScatter?** Just as the AllReduce removes a subscript ($F_Y \to F$ above), a ReduceScatter sums an unreduced/partially summed array and then scatters (shards) a different logical axis along the same mesh axis. $[F]\\{U_Y\\} \to [F_Y]$. The animation shows how this is done: note that it's very similar to an AllGather but instead of retaining each shard, we sum them together. Thus, its latency is roughly the same, excluding the time taken to perform the reduction.
+**ReduceScatter는 어떨까요?** AllReduce가 아래 첨자를 제거하는 것처럼($F_Y \to F$ above), ReduceScatter는 축소되지 않은/부분적으로 합산된 배열을 합산한 다음 동일한 메시 축을 따라 다른 논리적 축을 흩뿌립니다(샤딩합니다). $[F]\\{U_Y\\} \to [F_Y]$. 애니메이션은 이것이 어떻게 수행되는지 보여줍니다: 이는 AllGather와 매우 유사하지만 각 샤드를 유지하는 대신 합산한다는 점에 유의하세요. 따라서, 축소(reduction)를 수행하는 데 걸리는 시간을 제외하면 그 지연 시간(latency)은 거의 동일합니다.
 
 {% include figure.liquid path="assets/img/reduce-scatter.gif" class="img-fluid" %}
 
-The communication time for each hop is simply the per-shard bytes $V / Y$ divided by the bandwidth $W_\text{ici}$, as it was for an AllGather, so we have
+각 홉의 통신 시간은 AllGather와 마찬가지로 샤드당 바이트 수 $V / Y$를 대역폭 $W_\text{ici}$로 나눈 것이므로, 다음과 같습니다.
 
 $$T_{\text{comms per AllGather or ReduceScatter}} = \frac{V}{W_\text{ici}}$$
 
 $$T_{\text{comms per AllReduce}} = 2 \cdot \frac{V}{W_\text{ici}}$$
 
-where $$W_\text{ici}$$ is the bidirectional bandwidth, so long as we have a full ring to reduce over.
+여기서 $$W_\text{ici}$$는 우리가 축소할 완전한 링을 가지고 있는 한 양방향 대역폭입니다.
 
-### Case 4: both multiplicands have a non-contracting dimension sharded along the same axis
+### Case 4: 두 피연산자 모두 축소되지 않는 차원이 동일한 축을 따라 분할된 경우
 
-Each mesh dimension can appear at most once when sharding a tensor. Performing the above rules can sometimes lead to a situation where this rule is violated, such as:
+각 메시 차원은 텐서를 샤딩할 때 최대 한 번만 나타날 수 있습니다. 위 규칙을 수행하다 보면 이 규칙이 위반되는 상황이 발생할 수 있습니다. 예를 들면 다음과 같습니다.
 
 $$A[I_X, J] \cdot B[J, K_X] \rightarrow C[I_X, K_X]$$
 
-This is invalid because a given shard, say **i**, along dimension **X**, would have the **(i, i)**th shard of **C**, that is, a diagonal entry. There is not enough information among all shards, then, to recover anything but the diagonal entries of the result, so we cannot allow this sharding.
+이는 유효하지 않습니다. 왜냐하면 차원 **X**를 따르는 특정 샤드, 예를 들어 **i**는 **C**의 **(i, i)**번째 샤드, 즉 대각선 항목(diagonal entry)을 가질 것이기 때문입니다. 그러면 모든 샤드 중에서 결과의 대각선 항목 외에는 복구할 정보가 충분하지 않으므로 이 샤딩을 허용할 수 없습니다.
 
-The way to resolve this is to AllGather some of the dimensions. Here we have two choices:
+이를 해결하는 방법은 일부 차원을 AllGather하는 것입니다. 여기에는 두 가지 선택지가 있습니다:
 
 $$\begin{align*}
 \textbf{AllGather}_X A[I_X, J] \rightarrow &\ A[I, J] \\
 A[I, J] \cdot B[J, K_X] \rightarrow &\ C[I, K_X]
 \end{align*}$$
 
-or
+또는 
 
 $$\begin{align*}
 \textbf{AllGather}_X B[J, K_X] \rightarrow &\ B[J, K] \\
 A[I_X, J] \cdot B[J, K] \rightarrow &\ C[I_X, K]
 \end{align*}$$
 
-In either case, the result will only mention **X** once in its shape. Which one we pick will be based on what sharding the following operations need.
+어느 경우든, 결과는 그 형태에서 **X**를 한 번만 언급할 것입니다. 어느 것을 선택할지는 다음 연산에 필요한 샤딩에 따라 결정됩니다.
 
 ## A Deeper Dive into TPU Communication Primitives
 
-The previous 4 cases have introduced several "core communication primitives" used to perform sharded matrix multiplications:
+이전의 4가지 사례는 분할된 행렬 곱셈을 수행하는 데 사용되는 몇 가지 "핵심 통신 기본 연산(core communication primitives)"을 소개했습니다:
 
-1. **AllGather:** removes a subscript from a sharding, gathering the shards.
-2. **ReduceScatter:** removes an "un-reduced" suffix from an array by summing shards over that axis, leaving the array sharded over a second axis.
-3. **AllReduce:** removes an "un-reduced" suffix, leaving the array unsharded along that axis.
+1. **AllGather:** 샤딩에서 아래 첨자(subscript)를 제거하여 샤드를 수집합니다.
+2. **ReduceScatter:** "축소되지 않은(un-reduced)" 접미사를 가진 배열을 해당 축에 대해 샤드를 합산하여 제거하고, 배열을 두 번째 축에 걸쳐 샤딩된 상태로 둡니다.
+3. **AllReduce:** "축소되지 않은(un-reduced)" 접미사를 제거하여, 해당 축에 대해 배열을 샤딩되지 않은 상태로 둡니다.
 
-There's one more core communication primitive to mention that arises in the case of Mixture of Experts (MoE) models and other computations: the **AllToAll**.
+Mixture of Experts(MoE) 모델 및 기타 계산의 경우에 발생하는 또 다른 핵심 통신 기본 연산이 있습니다: **AllToAll**.
 
 ### Our final communication primitive: the AllToAll
 
-A final fundamental collective which does not occur naturally when considering sharded matrix multiplies, but which comes up constantly in practice, is the **AllToAll** collective, or more precisely the special case of a *sharded transposition* or resharding operation. e.g.
+분할된 행렬 곱셈을 고려할 때 자연스럽게 떠오르지는 않지만 실제로는 끊임없이 나타나는, 마지막 기본 집합 연산은 **AllToAll** 집합 연산, 또는 더 정확하게는 *샤딩된 전치(sharded transposition)* 또는 리샤딩 연산의 특수한 경우입니다. 예:
 
 $$\textbf{AllToAll}_{X, J} A[I_X, J] \rightarrow A[I, J_X]$$
 
-AllToAlls are typically required to rearrange sharded layouts between different regions of a sharded computation that don't have compatible layout schemes. They arise naturally when considering sharded mixture-of-experts models. *You can think of an AllToAll as moving a subscript from one axis to another*. Because an all to all doesn't need to replicate all of the data of each shard across the ring, it's actually *cheaper* than an AllGather (by a factor of ¼)<d-footnote>For even-sized bidirectional rings, each device will send $(N/2 + (N/2-1) + … + 1)$ chunks right and $((N/2-1) + … + 1)$ chunks left $= 0.5 \cdot (N / 2) \cdot (N/2 + 1) + 0.5 \cdot (N / 2) \cdot (N/2 - 1) = N^2/4$. The size of each chunk (aka shard of a shard) is $\text{bytes} / N^2$ so the per-device cost is $(\text{bytes} / N^2) \cdot N^2 / 4 = \text{bytes} / 4$. This result scales across all devices as the total bandwidth scales with device number.</d-footnote>.
+AllToAll은 호환되지 않는 레이아웃 체계를 가진 분할된 계산의 다른 영역 간에 분할된 레이아웃을 재정렬하는 데 일반적으로 필요합니다. 이는 분할된 전문가 혼합 모델을 고려할 때 자연스럽게 발생합니다. *AllToAll을 한 축에서 다른 축으로 아래 첨자(subscript)를 이동하는 것으로 생각할 수 있습니다*. AllToAll은 각 샤드의 모든 데이터를 링 전체에 복제할 필요가 없기 때문에 실제로는 AllGather보다 *저렴합니다* (¼배)<d-footnote>짝수 크기의 양방향 링의 경우, 각 디바이스는 오른쪽으로 $(N/2 + (N/2-1) + … + 1)$개의 청크와 왼쪽으로 $((N/2-1) + … + 1)$개의 청크를 보냅니다. 이는 $= 0.5 \cdot (N / 2) \cdot (N/2 + 1) + 0.5 \cdot (N / 2) \cdot (N/2 - 1) = N^2/4$와 같습니다. 각 청크(즉, 샤드의 샤드)의 크기는 $(\text{bytes} / N^2) \cdot N^2 / 4 = \text{bytes} / 4$입니다. 이 결과는 총 대역폭이 디바이스 수에 따라 확장되므로 모든 디바이스에 걸쳐 확장됩니다.</d-footnote>.
 
 {% include figure.liquid path="assets/img/all-to-all.gif" class="img-fluid" %}
 
-If we generalize to an ND AllToAll, the overall cost for an array of $V$ bytes on an AxBxC mesh is
-
-$$T_\text{comms per AllToAll} = \frac{V \cdot \max(A, B, C, ...)}{4 \cdot N \cdot W_\text{ici}}$$
+위에서 언급했듯이, $V$ 바이트 배열의 전체 비용은 다음과 같습니다.
 
 where as usual $W_\text{ici}$ is the bidirectional ICI bandwidth. For a 1D mesh, this reduces to $V / (4 \cdot W_\text{ici})$, which is 1 / 4 the cost of an AllReduce. In 2D, the cost actually scales down with the size of the smallest axis.
 
-*Aside: If you want a hand-wavy derivation of this fact, start with a 1D torus $\mathbb{Z} / N\mathbb{Z}$. If we pick a source and target node at random, they are on average N / 4 hops from each other, giving us a cost of $(V \cdot N) / (4 * N)$. Now if we consider an ND torus, each axis is basically independent. Each node has $1 / N$ bytes and on average has to hop its data $\max(A, B, C, …) / 4$ hops.*
+여기서 평소와 같이 $W_\text{ici}$는 양방향 ICI 대역폭입니다. 이는 AllGather 비용의 1/4이고 AllReduce 비용의 1/8입니다.
 
 ### More about the ReduceScatter
 
-ReduceScatter is a more fundamental operation than it first appears, as it is actually the derivative of an AllGather, and vice versa. i.e. if in the forward pass we have:
+ReduceScatter는 보이는 것보다 더 중추적이고 근본적인 연산입니다. 왜냐하면 실제로는 AllGather의 미분(derivative)이며, 그 반대도 마찬가지이기 때문입니다. 즉, 순방향 패스에서 다음과 같다면:
 
 $$\textbf{AllGather}_X A[I_X] \rightarrow A[I]$$
 
-Then we ReduceScatter the reverse-mode derivatives **A'** (which will in general be different on each shard) to derive the sharded **A'**:
+그러면 역방향 모드 미분 **A'**(일반적으로 각 샤드에서 다를 것임)을 ReduceScatter하여 샤딩된 **A'**를 도출합니다:
 
 $$\textbf{ReduceScatter}_X A'[I] \{ U_X \} \rightarrow A'[I_X]$$
 
-Likewise, $$\text{ReduceScatter}_X(A[I] \{U_X\}) \to A[I_X]$$ in the forward pass implies $$\text{AllGather}_{X}(A'[I_X]) \to A'[I]$$ in the backwards pass.
+마찬가지로, 순방향 패스에서 $$\text{ReduceScatter}_X(A[I] \{U_X\}) \to A[I_X])$$는 역방향 패스에서 $$\text{AllGather}_{X}(A'[I_X]) \to A'[I]$$를 의미합니다.
 
-{% details For details on how AllGather and ReduceScatter are derivatives of eachother, click here. %}
-
-This stems from the fact that broadcasts and reductions are transposes of eachother as linear operators, and AllGather and ReduceScatter are outer products (also known as [Kronecker products](https://en.wikipedia.org/wiki/Kronecker_product)) of broadcast and reduce, respectively. Concretely, if we have a vector $x \in \mathbb{R}^n$, any number of devices $p \in \mathbb{N}$, and we let $u = (1, \ldots, 1) \in \mathbb{R}^p$, we can define broadcast and reduce in the following way, which should match your intuitive understanding of them:
-
-$$
-\begin{align*}
-\text{broadcast} &: \mathbb{R}^n \rightarrow \mathbb{R}^{p n} \\
-\text{broadcast} &= u \otimes \mathbf{I}_n \\
-\text{reduce} &: \mathbb{R}^{p n} \rightarrow \mathbb{R}^n \\
-\text{reduce} &= u^T \otimes \mathbf{I}_n
-\end{align*}
-$$
-
-Let's see how this looks in an example, where $n = 1$, $p = 2$. If $x = (7)$, we have $$\text{broadcast}(x) = \left(\begin{pmatrix} 1 \\ 1 \end{pmatrix} \otimes \begin{pmatrix} 1 \end{pmatrix}\right) x = \begin{pmatrix} 1 \\ 1 \end{pmatrix} x = \begin{pmatrix}  7\\  7  \end{pmatrix} \in \mathbb{R}^{p n}$$. This matches what we'd expect, broadcasting a vector in $\mathbb{R}^n$ to $\mathbb{R}^{pn}$. Now letting $y = (8, 9)$, we have $$\text{reduce}(y) = \left(\begin{pmatrix} 1 & 1 \end{pmatrix} \otimes \begin{pmatrix} 1\end{pmatrix}\right) y = \begin{pmatrix} 1 & 1  \end{pmatrix} \begin{pmatrix}  8 \\ 9  \end{pmatrix} = \begin{pmatrix}   17    \end{pmatrix}$$. This again matches what we'd expect, reducing a vector in $\mathbb{R}^{p n}$ to a vector in $\mathbb{R}^{n}$. Since $(A \otimes B)^T = A^T \otimes B^T$ for any two matrices $A$ and $B$, we see that $\text{reduce} = \text{broadcast}^T$. We recover AllGather and ReduceScatter as the following outer products:
-
-$$
-\begin{align*}
-\text{AllGather} &: \mathbb{R}^{p n} \rightarrow \mathbb{R}^{p^2 n} \\
-\text{AllGather} &= \text{broadcast} \otimes \mathbf{I}_p \\
-\text{ReduceScatter} &= \mathbb{R}^{p^2 n} \rightarrow \mathbb{R}^{p n} \\
-\text{ReduceScatter} &= \text{reduce} \otimes \mathbf{I}_p
-\end{align*}
-$$
-
-Here we think of $\mathbb{R}^{p^2 n}$ as $\mathbb{R}^{p \times p n}$, so one $\mathbb{R}^{p n}$ vector for each of our $p$ devices. We suggest playing around with small examples, say $n = 2$, $p = 3$, to see what these operators look like as matrices. Using the same transposition property, we once more obtain $\text{AllGather}^T = \text{ReduceScatter}$, and of course $\text{ReduceScatter}^T = \text{AllGather}$. This transposition will arise during backpropagation, since if we have $y = Ax$ for some linear operator $A$, such as AllGather or ReduceScatter, then during backpropagation we will have the derivative of the loss with respect to $y$, $\frac{\partial L}{\partial y}$, and we obtain $\frac{\partial L}{\partial x}$ as $\frac{\partial L}{\partial x} = A^T \frac{\partial L}{\partial y}$. This shows how the derivative of AllGather will be ReduceScatter, and viceversa.
-
-{% enddetails %}
-
-Turning an AllReduce into an AllGather and ReduceScatter also has the convenient property that we can defer the final AllGather until some later moment. Very commonly we'd rather not pay the cost of reassembling the full matrix product replicated across the devices. Rather we'd like to preserve a sharded state even in this case of combining two multiplicands with sharded contracting dimensions:
+AllReduce를 AllGather와 ReduceScatter로 바꾸는 것은 최종 AllGather를 나중의 어느 순간으로 연기(defer)할 수 있다는 편리한 속성도 가지고 있습니다. 매우 흔하게 우리는 전체 행렬 곱을 디바이스에 걸쳐 복제하여 재조립하는 비용을 지불하고 싶지 않습니다. 오히려 우리는 축소 차원이 샤딩된 두 피연산자를 결합하는 이 경우에도 샤딩된 상태를 보존하고 싶습니다:
 
 $$A[I, J_X] \cdot B[J_X, K] \rightarrow C[I, K_X]$$
 
-In this case, we can also perform a ReduceScatter instead of an AllReduce, and then optionally perform the AllGather at some later time, i.e.
+이 경우, AllReduce 대신 ReduceScatter를 수행한 다음, 선택적으로 나중에 AllGather를 수행할 수 있습니다. 즉,
 
 $$\begin{align*}
 A[I, J_X] \cdot_{LOCAL} B[J_X, K] \rightarrow &\ C[I, K] \{ U_X \} \\
 \textbf{ReduceScatter}_{X,K} C[I, K] \{ U_X \} \rightarrow &\ C[I, K_X]
 \end{align*}$$
 
-Note that ReduceScatter *introduces* a sharded dimension, and so has a natural freedom to shard along either the **I** or **K** named dimensions in this case. We generally need to choose *which* named dimension to introduce a new sharding to when using a ReduceScatter (though the choice is usually forced by the larger modeling context). This is why we use the syntax **ReduceScatter<sub>X,K</sub>** to specify the axis to shard.
-
-### How to overlap matmul communication with compute
-
-As we discussed in [Part 1](../roofline), we generally assume we can always overlap communication with some useful computation if the comms are fast enough. The collectives in this section generally can be overlapped with the matrix multiplication compute itself, but doing so is non-trivial. The algorithm we use is something called a **collective matmul**, first described in [Wang et al.](https://dl.acm.org/doi/pdf/10.1145/3567955.3567959). Here is a simplified animation of how this overlap can be implemented:
-
-{% include figure.liquid path="assets/img/ag_matmul.gif" caption="<b>Figure:</b> an animation showing how a single sharded matrix-vector product can be overlapped with the resulting AllReduce (case 3 above). A full matmul is composed of multiple matrix-vector products." %}
-
-To put it simply, we can do the matmul for one chunk of the matrix while starting the ring reduction for previous chunks. In some cases we can also tile over the batch dimension or matrix input dimension. We work through a simple JAX implementation in [Part 10](../jax-stuff) and [the Mosaic docs](https://docs.jax.dev/en/latest/pallas/gpu/collective_matmul.html) also gives a good example on GPU. We encourage you to implement a version of this at some point. 
+ReduceScatter는 샤딩된 차원을 *도입*하므로, 이 경우 **I** 또는 **K** 이름 있는 차원을 따라 샤딩할 자연스러운 자유를 가집니다. 일반적으로 ReduceScatter를 사용할 때 새로운 샤딩을 도입할 *어떤* 이름 있는 차원을 선택해야 합니다(선택은 보통 더 큰 모델링 컨텍스트에 의해 강제되지만). 이것이 우리가 샤딩할 축을 지정하기 위해 **ReduceScatter<sub>X,K</sub>** 구문을 사용하는 이유입니다.
 
 ## What Have We Learned?
 
-* The sharding of an array is specified by a **Mesh** that names the physical, hardware axes of our TPU mesh and a **Sharding** that assigns mesh axis names to the logical axes of the array.
-  * For example, **A**[I<sub>XY</sub>, J] describes an abstract array **A** with its first dimension sharded along two mesh axes X and Y. Combined with Mesh(mesh_shape=(4, 8), axis_names=('X', 'Y')) or the abbreviated Mesh({'X': 4, 'Y': 8}), this tells us our array is sharded 32 ways along the first dimension.
+* 배열의 샤딩은 TPU 메시의 물리적, 하드웨어 축에 이름을 지정하는 **Mesh(메시)**와 배열의 논리적 축에 메시 축 이름을 할당하는 **Sharding(샤딩)**에 의해 지정됩니다.
+  * 예를 들어, **A**[I<sub>XY</sub>, J]는 첫 번째 차원이 두 메시 축 X와 Y에 걸쳐 샤딩된 추상 배열 **A**를 설명합니다. 이는 Mesh(mesh_shape=(4, 8), axis_names=('X', 'Y')) 또는 축약된 Mesh({'X': 4, 'Y': 8})와 결합되어, 우리 배열이 첫 번째 차원을 따라 32방향으로 샤딩되었음을 알려줍니다.
 
-* **Arithmetic with sharded arrays works exactly like with unsharded arrays unless you perform a contraction along a sharded axis**. In that case, we have to introduce some communication. We consider four cases:
+* **분할된 배열을 사용한 산술 연산은 샤딩된 축을 따라 축소를 수행하지 않는 한 샤딩되지 않은 배열과 똑같이 작동합니다**. 그 경우, 우리는 통신을  조금은 도입해야 합니다. 우리는 네 가지 경우를 고려합니다:
 
-  1. *Neither array is sharded along the contracting dimension*: no communication is needed.
-  2. *One array is sharded along the contracting dimension* (or the contracting dimensions are sharded along different axes): we AllGather one of the inputs before performing the operation.
-  3. *Both arrays are identically sharded along the contracting dimension:* we multiply the shards locally then perform an AllReduce or ReduceScatter.
-  4. *Both arrays are sharded along the same mesh axis along a non-contracting dimension:* we AllGather one of the inputs first.
+  1.  *두 배열 모두 축소 차원을 따라 샤딩되지 않은 경우*: 통신이 필요 없습니다.
+  2.  *한 배열이 축소 차원을 따라 샤딩된 경우*(또는 축소 차원이 다른 축을 따라 샤딩된 경우): 연산을 수행하기 전에 입력 중 하나를 AllGather합니다.
+  3.  *두 배열 모두 축소 차원을 따라 동일하게 샤딩된 경우:* 샤드를 로컬에서 곱한 다음 AllReduce 또는 ReduceScatter를 수행합니다.
+  4.  *두 배열 모두 축소되지 않는 차원이 동일한 메시 축을 따라 샤딩된 경우:* 입력 중 하나를 먼저 AllGather합니다.
 
-* TPUs use roughly **4 core communication primitives**:
-  1. AllGather: $[A_X, B] \to [A, B]$
-  2. ReduceScatter: $[A, B] \\{U_X\\} \to [A, B_X]$
-  3. AllToAll: $[A, B_X] \to [A_X, B]$
-  4. AllReduce: $[A_X, B]\\{U_Y\\} \to [A_X, B]$ (technically not a primitive since it combines a ReduceScatter + AllGather)
+* TPU는 대략 **4가지 핵심 통신 기본 연산**을 사용합니다:
+  1. AllGather: $[A_X, B] \to [A, B]$ 
+  2. ReduceScatter: $[A, B] \\{U_X\\} \to [A, B_X]$ 
+  3. AllToAll: $[A, B_X] \to [A_X, B]$ 
+  4. AllReduce: $[A_X, B]\\{U_Y\\} \to [A_X, B]$ (기술적으로 ReduceScatter + AllGather를 결합하므로 기본 연산은 아님)
 
 {% include figure.liquid path="assets/img/all-collectives.png" class="img-fluid" %}
 
-* The cost and latency of each of these operations **doesn't depend on the size of the axis (as long as they're bandwidth bound)**, but only on the size of the input arrays and the bandwidth of the link. For a unidirectional AllGather/ReduceScatter:
+* 이러한 각 연산의 비용과 지연 시간은 **축의 크기에 의존하지 않으며(bandwidth bound인 한)**, 입력 배열의 크기와 링크의 대역폭에만 의존합니다. 단방향 AllGather/ReduceScatter의 경우:
 
 $$T_{\text{comm per AllGather or ReduceScatter}} = \frac{\text{Data volume}}{\text{bandwidth}} \cdot \frac{\text{Axis} - 1}{\text{Axis}}
 \longrightarrow \frac{\text{Data volume}}{\text{bandwidth (bidirectional)}}$$
 
-* An AllReduce is composed of a ReduceScatter followed by an AllGather, and thus has 2x the above cost. An AllToAll only has to pass shards part-way around the ring and is thus ¼ the cost of an AllGather. Here's a summary:
+* AllReduce는 ReduceScatter 다음에 AllGather로 구성되므로 위 비용의 2배입니다. AllToAll은 링 주위로 샤드를 부분적으로만 전달하면 되므로 AllGather 비용의 ¼입니다. 아래는 요약입니다:
 
 | Operation         | Description                                                                                                        | Syntax                           | Runtime                                          |
 | :---------------- | :----------------------------------------------------------------------------------------------------------------- | :------------------------------- | :----------------------------------------------- |
@@ -573,7 +535,8 @@ $$T_{\text{comm per AllGather or ReduceScatter}} = \frac{\text{Data volume}}{\te
 
 ## Some Problems to Work
 
-*Here are some instructive problems based on content in this section. We won't include all answers at the moment but we'll write up more answers as we can.*
+*이 섹션의 내용을 바탕으로 한 몇 가지 재밌는 문제입니다. 현재 모든 답을 포함하지는 않지만, 가능한 한 더 많은 답을 작성할 예정입니다.*
+*[역자주: 문제는 모든 챕터의 내용 번역 후 번역 예정입니다!]*
 
 **Question 1 [replicated sharding]**: An array is sharded $A[I_X, J, K, \ldots]$ (i.e., only sharded across $X$), with a mesh `Mesh({'X': 4, 'Y': 8, 'Z': 2})`.  What is the ratio of the total number of bytes taken up by $A$ across all chips to the size of one copy of the array?
 
