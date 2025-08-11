@@ -2,7 +2,7 @@
 layout: distill
 title: "All the Transformer Math You Need to Know"
 # permalink: /main/
-description: "Here we'll do a quick review of the Transformer architecture, specifically how to calculate FLOPs, bytes, and other quantities of interest."
+description: "여기서는 Transformer 아키텍처에 대해 간략히 복습하고, 구체적으로 FLOPs, bytes 및 기타 주요 수치들을 계산하는 방법을 살펴보겠습니다."
 date: 2025-02-04
 future: true
 htmlwidgets: true
@@ -87,9 +87,15 @@ _styles: >
   }
 ---
 
+<p markdown=1 class="takeaway">
+<b>번역 안내:</b> 원저자([Jacob Austin](https://www.jacobaustin.org/))의 허락을 받아 원문을 번역 중입니다.<br> 
+해당 글의 1인칭은 원문 저자를 지칭합니다.<br> 
+원문: [How to Scale Your Model](https://jax-ml.github.io/scaling-book/)<br> 
+번역: [신종훈](https://www.linkedin.com/in/michael-shin-3522a6189/)</p>
+
 ## Counting Dots
 
-Let's start with vectors $$x$$,$$y$$ and matrices $$A$$,$$B$$ of the following shapes:
+다음과 같은 형태의 벡터 $$x$$,$$y$$와 행렬 $$A$$,$$B$$로 시작하겠습니다:
 
 $$
 \def \red#1{\textcolor{red}{#1}}
@@ -109,10 +115,11 @@ B               & \textrm{[P M]} \\
 \end {array}
 $$
 
-- A dot product of $$x \cdot y$$ requires $$P$$ _adds_ and _multiplies_, or $$2P$$ floating-point operations total.
-- A matrix-vector product $$Ax$$ does $$N$$ dot-products along the rows of $$A$$, for $$2NP$$ FLOPs.
-- A matrix-matrix product $$AB$$ does a matrix-vector product for each of the $$M$$ columns of $$B$$, for $$2NPM$$ FLOPs total.
-- In general, if we have two higher dimensional arrays $$C$$ and $$D$$, where some dimensions are <span style="color:red">CONTRACTING</span> and some are <span style="color:blue">BATCHING</span>.  (e.g. $$C[\blue{GH}IJ\red{KL}], D[\blue{GH}MN\red{KL}]$$) then the FLOPs cost of this contraction is two times the product of all of the $$C$$ and $$D$$ dimensions where the batch and contraction dimensions are only counted once, (e.g. $$2\blue{GH}IJMN\red{KL}$$). Note that a dimension is only batching if it occurs in both multiplicands. (Note also that the factor of 2 won't apply if there are no contracting dimensions and this is just an elementwise product.)
+- $$x \cdot y$$의 내적(dot product)은 $$P$$개의 _덧셈_과 _곱셈_, 즉 총 $$2P$$개의 부동소수점 연산(FLOPs)을 필요로 합니다.
+- 행렬-벡터 곱 $$Ax$$는 $$A$$의 행을 따라 $$N$$개의 내적을 수행하므로 $$2NP$$ FLOPs가 필요합니다. 
+- 행렬-행렬 곱 $$AB$$는 $$B$$의 각 열에 대해 $$M$$개의 행렬-벡터 곱을 수행하므로 총 $$2NPM$$ FLOPs가 필요합니다. 
+- 일반적으로, 일부 차원이 <span style="color:red">축약(CONTRACTING</span>
+- 일반적으로, 일부 차원이 <span style="color:red">축약(CONTRACTING)</span>되고 일부는 <span style="color:blue">배치(BATCHING)</span>되는 고차원 배열 $$C$$와 $$D$$가 있다면(예: $$C[\blue{GH}IJ\red{KL}], D[\blue{GH}MN\red{KL}]$$), 이 축약의 FLOPs 비용은 배치 및 축약 차원을 한 번만 계산한 모든 $$C$$와 $$D$$차원의 곱에 2를 곱한 값입니다(예:$$2\blue{GH}IJMN\red{KL}$$). 한 차원이 배치되려면 두 피연산자 모두에 나타나야 합니다. (또한, 축약 차원이 없고 이것이 단지 원소별 곱셈일 경우에는 2의 계수가 적용되지 않습니다.) 
 
 $$
 \begin{array}{ccc}
@@ -129,25 +136,25 @@ AB         & 2NPM & NP + PM \\
 \end {array}
 $$
 
-Make note of the fact that for a matrix-matrix multiply, the *compute* scales cubically $$O(N^3)$$ while the data transfer only scales quadratically $$O(N^2)$$ \- this means that as we scale up our matmul size, it becomes *easier* to hit the compute-saturated limit. This is extremely unusual, and explains in large part why we use architectures dominated by matrix multiplication \- they're amenable to being scaled!
+행렬-행렬 곱셈의 경우, *연산량*은 3차($$O(N^3)$$)로 확장되는 반면 데이터 전송은 2차($$O(N^2)$$)로만 확장된다는 사실에 주목하세요. 이는 행렬 곱셈의 크기를 키울수록 연산 포화(compute-saturated) 한계에 도달하기가 *더 쉬워진다*는 것을 의미합니다. 이는 매우 이례적인 현상이며, 우리가 행렬 곱셈이 지배적인 아키텍처를 사용하는 이유를 상당 부분 설명해 줍니다. 즉, 확장에 용이하기 때문입니다! 
 
 {% include figure.liquid path="assets/img/matmul-flops.gif" class="img-fluid" %}
 
 ### Forward and reverse FLOPs
 
-During training, we don't particularly care about the result of a given matrix multiply; we really care about its derivative. That means we do significantly more FLOPs during backpropagation.
+훈련 중에는 주어진 행렬 곱셈의 결과 자체에는 특별히 신경 쓰지 않고, 그 미분값에 더 관심이 있습니다. 이는 역전파(backpropagation) 중에 훨씬 더 많은 FLOPs를 수행한다는 것을 의미합니다.
 
-If we imagine **B** is just one matrix in a larger network and **A** are our input activations with **C = A B**, the derivative of the loss **L** with respect to **B** is given by the chain rule:
+**B**가 더 큰 네트워크의 한 행렬이고 **A**가 입력 활성화(input activations)이며 **C = A B**라고 상상해 봅시다. 손실(loss) **L**의 **B**에 대한 미분은 연쇄 법칙에 의해 다음과 같이 주어집니다:
 
 $$\frac{\partial L}{\partial B} = \frac{\partial L}{\partial C}\frac{\partial C}{\partial B} = A^T \left(\frac{\partial L}{\partial C}\right)$$
 
-which is an outer product and requires $2NPM$ FLOPs to compute (since it contracts over the $N$ dimension). Likewise, the derivative of the loss with respect to **A** is
+이는 외적(outer product)이며, ($N$ 차원에 대해 축약되므로) 계산하는 데 $2NPM$ FLOPs가 필요합니다. 마찬가지로, 손실의 **A**에 대한 미분은 
 
 $$\frac{\partial L}{\partial A} = \frac{\partial L}{\partial C}\frac{\partial C}{\partial A} = \left(\frac{\partial L}{\partial C}\right) B^T$$
 
-is again $2NPM$ FLOPs since **dL/dC** is a (co-)vector of size $$[N, M]$$. While this quantity isn't the derivative wrt. a parameter, it's used to compute derivatives for previous layers of the network (e.g. just as dL/dC is used to compute dL/dB above).
+이며, **dL/dC**가 $$[N, M]$$ 크기의 (코)벡터이므로 다시 $2NPM$ FLOPs입니다. 이 양은 파라미터에 대한 미분은 아니지만, 네트워크의 이전 레이어에 대한 미분을 계산하는 데 사용됩니다(예: 위에서 dL/dC가 dL/dB를 계산하는 데 사용된 것처럼). 
 
-Adding these up, we see that **during training, we have a total of 6NPM FLOPs**, compared to 2NPM during inference: 2NPM in the forward pass, 4NPM in the backward pass. Since PM is the number of parameters in the matrix, this is the simplest form of the famous $$6 * \text{num parameters} * \text{num tokens}$$ approximation of Transformer FLOPs during training: each token requires $$6 * \text{num parameters}$$ FLOPs. We'll show a more correct derivation below.
+ 이를 모두 더하면, **훈련 중에는 총 6NPM FLOPs**가 필요하며, 이는 추론 중의 2NPM에 비해 많습니다: 순방향 패스에서 2NPM, 역방향 패스에서 4NPM. PM이 행렬의 파라미터 수이므로, 이것이 훈련 중 Transformer FLOPs에 대한 유명한 $$6 * \text{num parameters} * \text{num tokens}$$ 근사치의 가장 간단한 형태입니다: 각 토큰은 $$6 * \text{num parameters}$$ FLOPs를 필요로 합니다. 아래에서 더 정확한 유도를 보여드리겠습니다. 
 
 ## Transformer Accounting
 
