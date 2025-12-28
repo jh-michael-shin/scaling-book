@@ -11,11 +11,8 @@ section_number: 12
 
 previous_section_url: "../conclusion"
 previous_section_name: "Part 11: Conclusion"
-previous_section_url: "../conclusion"
-previous_section_name: "Part 11: Conclusion"
 
 next_section_url:
-next_section_name: "The End"
 next_section_name: "The End"
 
 bibliography: main.bib
@@ -24,18 +21,8 @@ giscus_comments: true
 
 authors:
   - name: Jacob Austin<sup>†</sup>
-  - name: Jacob Austin<sup>†</sup>
     url: "https://www.jacobaustin.org/"
     affiliations:
-      name: <sup>†</sup>Google DeepMind
-  - name: Swapnil Patil<sup>†</sup>
-    url: "https://www.linkedin.com/in/swapnil-patil-5b47a068"
-  - name:  Adam Paszke<sup>†</sup>
-    url: https://x.com/apaszke
-  - name: Reiner Pope<sup>*</sup>
-    url: https://x.com/reinerpope
-    affiliations:
-      name: <sup>*</sup>MatX
       name: <sup>†</sup>Google DeepMind
   - name: Swapnil Patil<sup>†</sup>
     url: "https://www.linkedin.com/in/swapnil-patil-5b47a068"
@@ -57,16 +44,8 @@ toc:
     - name: "Summary of GPU specs"
     - name: GPUs vs. TPUs at the chip level
     - name: "Quiz 1: GPU hardware"
-    - name: Memory
-    - name: "Summary of GPU specs"
-    - name: GPUs vs. TPUs at the chip level
-    - name: "Quiz 1: GPU hardware"
   - name: Networking
   - subsections:
-    - name: At the node level
-    - name: "Quiz 2: GPU nodes"
-    - name: Beyond the node level
-    - name: "Quiz 3: Beyond the node level"
     - name: At the node level
     - name: "Quiz 2: GPU nodes"
     - name: Beyond the node level
@@ -87,23 +66,7 @@ toc:
     - name: "Quiz 5: LLM rooflines"
   - name: "Acknowledgements and Further Reading"
   - name: "Appendix"
-    - name: Intra-node collectives
-    - name: Cross-node collectives
-    - name: "Quiz 4: Collectives"
-  - name: "Rooflines for LLM Scaling on GPUs"
   - subsections:
-    - name: "Data Parallelism"
-    - name: "Tensor Parallelism"
-    - name: "Expert Parallelism"
-    - name: "Pipeline Parallelism"
-    - name: "Examples"
-    - name: "TLDR of LLM scaling on GPUs"
-    - name: "Quiz 5: LLM rooflines"
-  - name: "Acknowledgements and Further Reading"
-  - name: "Appendix"
-  - subsections:
-    - name: "Appendix A: How does this change with GB200?"
-    - name: "Appendix B: More networking details"
     - name: "Appendix A: How does this change with GB200?"
     - name: "Appendix B: More networking details"
 
@@ -270,7 +233,7 @@ H100과 B200 모두 정확히 2배의 fp8 FLOPs/s를 가지므로 피크 intensi
 
 {% details 답을 보려면 여기를 클릭하세요. %}
 
-**Answer:** SM당 256kB SMEM과 256kB 레지스터 메모리가 있으므로 각각 약 33MB(`132 * 256kB`)입니다. 합치면 총 약 66MB가 됩니다. 이는 최신 TPU VMEM의 120MB의 약 절반이지만, TPU는 총 레지스터 메모리가 256kB에 불과합니다! TPU VMEM 지연 시간은 SMEM 지연 시간보다 낮으며, 이는 TPU에서 레지스터 메모리가 그렇게 중요하지 않은 한 가지 이유입니다(VMEM으로의 spill과 fill이 저렴함).
+**Answer:** SM당 256kB SMEM과 256kB 레지스터 메모리가 있으므로 각각 약 33MB (`132 * 256kB`)입니다. 합치면 총 약 66MB가 됩니다. 이는 최신 TPU VMEM의 120MB의 약 절반이지만, TPU는 총 레지스터 메모리가 256kB에 불과합니다! TPU VMEM 지연 시간은 SMEM 지연 시간보다 낮으며, 이는 TPU에서 레지스터 메모리가 그렇게 중요하지 않은 한 가지 이유입니다(VMEM으로의 spill과 fill이 저렴함).
 
 {% enddetails %}
 
@@ -422,7 +385,6 @@ GPU 스위칭 패브릭은 이론적으로 추가 지연 시간과 값비싼 네
 
 GPU는 TPU와 동일한 모든 collectives를 수행할 수 있습니다: ReduceScatters, AllGathers, AllReduces, AllToAlls. TPU와 달리, 이것들이 작동하는 방식은 노드 수준(NVLink를 통해)에서 수행되는지 그 이상(InfiniBand를 통해)에서 수행되는지에 따라 변경됩니다. 이러한 collectives는 NVIDIA의 [NVSHMEM](https://developer.nvidia.com/nvshmem) 및 [NCCL](https://developer.nvidia.com/nccl) ("nickel"로 발음) 라이브러리에 의해 구현됩니다. NCCL은 [여기](https://github.com/NVIDIA/nccl)에 오픈 소스로 공개되어 있습니다. NCCL은 지연 시간 요구 사항/토폴로지([세부 정보](https://github.com/NVIDIA/nccl/issues/1415#issuecomment-2310650081))에 따라 다양한 구현을 사용하지만, 여기부터는 스위치드 트리 패브릭(switched tree fabric)에 대한 이론적으로 최적의 모델에 대해 논의하겠습니다.
 
-### Intra-node collectives
 ### Intra-node collectives
 
 **AllGather or ReduceScatter:** 노드 수준에서의 AllGather 또는 ReduceScatter의 경우 TPU처럼 링 주위로 수행할 수 있으며 각 홉에서 전체 GPU-to-GPU 대역폭을 사용합니다. GPU를 임의로 정렬하고 전체 GPU-to-GPU 대역폭을 사용하여 링 주위로 배열의 일부를 보냅니다.<d-footnote>각 GPU가 $\text{bytes} / N$ 크기의 청크를 다른 $N - 1$ GPU 각각에 보내 총 $(N - 1) * N * bytes / N$ 바이트가 통신되는 것으로 생각할 수도 있습니다.</d-footnote> 각 홉의 비용은 $T_\text{hop} = \text{bytes} / (N * \text{GPU egress bandwidth})$이므로 전체 비용은
