@@ -96,9 +96,9 @@ T_\text{math} = \frac{\text{Computation FLOPs}}{\text{Accelerator FLOPs/s}}
 
 예를 들어, NVIDIA H100은 초당 약 9.89e14 bfloat16<d-footnote>bf16은 ML에서 자주 사용되는 16비트 부동소수점 형식인 <a href="https://en.wikipedia.org/wiki/Bfloat16_floating-point_format">bfloat16</a>의 줄임말입니다.</d-footnote> FLOPs를 수행할 수 있고, TPU v6e는 초당 9.1e14 FLOPs를 수행할 수 있습니다.<d-footnote>H100과 B200은 일반적으로 명시된 최대 FLOPs의 약 80-85%만 달성할 수 있는 반면, TPU는 일반적인 사용 환경에서 95%에 더 가까운 성능을 낼 수 있습니다.</d-footnote> 이는 H100에서 1e12 FLOPs를 수행하는 데 (대략) `1e12 / 9.89e14 = 1.01ms` 가 걸리고, TPU v6e에서는 `1e12 / 9.1e14 = 1.1ms` 가 걸린다는 의미입니다.<d-footnote>이 칩들은 가격이 다르며, 이 결과는 비용을 기준으로 정규화되지 않았음을 유의하세요.</d-footnote>
 
-**칩 내 통신(Communication within a chip):** *가속기 내에서*, 텐서는 온칩 메모리(HBM)와 연산 코어(compute cores) 사이에서 이동(transferred)되어야 합니다. 이 연결의 대역폭은 "HBM 대역폭"<d-footnote>NVIDIA는 이를 "메모리 대역폭"이라고도 부릅니다.</d-footnote> H100에서는, [약 3.35TB/s 이고](https://www.nvidia.com/en-us/data-center/h100/), TPU v6e에서는 [약 1.6TB/s 입니다](https://cloud.google.com/tpu/docs/v6e)
+**칩 내 통신(Communication within a chip):** *가속기 내에서*, 텐서는 온칩 메모리(HBM)와 연산 코어(compute cores) 사이에서 이동(transferred)되어야 합니다. 이 연결의 대역폭은 "HBM 대역폭"<d-footnote>NVIDIA는 이를 "메모리 대역폭"이라고도 부릅니다.</d-footnote> H100에서는 [약 3.35TB/s 이고](https://www.nvidia.com/en-us/data-center/h100/), TPU v6e에서는 [약 1.6TB/s 입니다](https://cloud.google.com/tpu/docs/v6e).
 
-**칩 간 통신(Communication between chips):**  모델을 *여러 가속기에* 분산시킬 때, 텐서는 번번이 가속기 사이에서 전송되어야 합니다. 우리 하드웨어에는 이를 위한 몇 가지 옵션(ICI, DCN, PCIe)이 있으며, 각각 다른 대역폭을 가집니다.
+**칩 간 통신(Communication between chips):** 모델을 *여러 가속기에* 분산시킬 때, 텐서는 번번이 가속기 사이에서 전송되어야 합니다. 우리 하드웨어에는 이를 위한 몇 가지 옵션(ICI, DCN, PCIe)이 있으며, 각각 다른 대역폭을 가집니다.
 
 통신이 칩 내에서 이루어지든 칩 간에 이루어지든, 우리는 이를 bytes/s 단위로 측정하고 총 통신 시간을 다음과 같이 추정합니다:
 
@@ -132,7 +132,7 @@ T_\text{math} > T_\text{comms} \Leftrightarrow \frac{\text{Computation FLOPs}} {
 \Leftrightarrow \text{Intensity}(\text{Computation}) > \text{Intensity}(\text{Accelerator}) & \\
 \end{align*}$$
 
-$\text{Intensity}(\text{Accelerator})$ 라는 양은 우리 가속기가 최대 FLOPs/s를 달성하는 arithmetic intensity입니다. **TPU v5e MXU의 경우, 이는 약 240 FLOPs/byte 입니다**<d-footnote>MXU는 TPU의 행렬 곱셈 유닛(matrix multiply unit)입니다. 여기서 MXU임을 명시하는 이유는, TPU에는 VPU처럼 원소별 연산을 담당하는 다른 가속기들이 있고, 이들의 최대 FLOPs/s는 다르기 때문입니다.</d-footnote>, TPU는 `1.97e14` FLOPs/s를 수행하고 HBM에서 `8.2e11` bytes/s를 로드할 수 있기 때문입니다. 즉, 어떤 알고리즘이 240<d-footnote>이는 알고리즘이 HBM에서 가중치를 로드하고 MXU에서 실행되는 경우에만 해당됩니다. 다음 섹션에서 논의하겠지만, 훨씬 더 높은 대역폭을 가진 VMEM에 파라미터를 저장할 수도 있습니다. 많은 알고리즘은 또한 다른 성능 특성을 가진 VPU에서 실행됩니다.</d-footnote> FLOPs/byte보다 낮은 arithmetic intensity를 가진다면, 바이트 로딩에 의해 병목이 발생하여 하드웨어를 효율적으로 사용하지 못하게 됩니다.이러한 예시를 하나 살펴보겠습니다:
+$\text{Intensity}(\text{Accelerator})$ 라는 양은 우리 가속기가 최대 FLOPs/s를 달성하는 arithmetic intensity입니다. **TPU v5e MXU의 경우, 이는 약 240 FLOPs/byte 입니다**<d-footnote>MXU는 TPU의 행렬 곱셈 유닛(matrix multiply unit)입니다. 여기서 MXU임을 명시하는 이유는, TPU에는 VPU처럼 원소별 연산을 담당하는 다른 가속기들이 있고, 이들의 최대 FLOPs/s는 다르기 때문입니다.</d-footnote>, TPU는 `1.97e14` FLOPs/s를 수행하고 HBM에서 `8.2e11` bytes/s를 로드할 수 있기 때문입니다. 즉, 어떤 알고리즘이 240<d-footnote>이는 알고리즘이 HBM에서 가중치를 로드하고 MXU에서 실행되는 경우에만 해당됩니다. 다음 섹션에서 논의하겠지만, 훨씬 더 높은 대역폭을 가진 VMEM에 파라미터를 저장할 수도 있습니다. 많은 알고리즘은 또한 다른 성능 특성을 가진 VPU에서 실행됩니다.</d-footnote> FLOPs/byte보다 낮은 arithmetic intensity를 가진다면, 바이트 로딩에 의해 병목이 발생하여 하드웨어를 효율적으로 사용하지 못하게 됩니다. 이러한 예시를 하나 살펴보겠습니다:
 
 **<span style="color:#7ab5ff">Example (내적, dot product)</span>:** bfloat16 정밀도로 두 벡터의 내적, `x • y: bf16[N], bf16[N] → bf16[1]` 을 계산하려면, 메모리에서 각각 $2 * N = 2N$ bytes인 $x$ 와 $y$ 를 로드하고, $N$ 번의 곱셈과 $N-1$ 번의 덧셈을 수행한 후, $2$ bytes를 HBM에 다시 써야 합니다
 
@@ -140,7 +140,7 @@ $$\begin{equation}
 \text{Intensity}(\text{dot product}) = \frac{\text{Total FLOPs}}{\text{Total Bytes}} = \frac{N + N - 1}{2N + 2N + 2} = \frac{2N - 1}{4N + 2} \rightarrow \frac{1}{2}
 \end{equation}$$
 
-$N\rightarrow\infty$ 일 때. 따라서 내적(dot product)의 arithmetic intensity는 $\frac{1}{2}$ 입니다, 다시 말해, 내적은 로드된 바이트당 0.5개의 부동소수점 연산을 수행합니다. 이는 우리의 arithmetic intensity가 하드웨어의 것보다 낮아 통신 병목(communication-bound) 상태가 될 것임을 의미합니다.<d-footnote>위의 240이라는 수치는 여기서 올바른 비교는 아닙니다. 다음 섹션에서 보겠지만, 내적(dot-product)은 MXU가 아닌 VPU에서 수행되기 때문입니다. TPU v5p VPU는 약 7e12 FLOPs / second를 수행할 수 있어 critical intensity는 약 3이며, 이는 여기서도 여전히 어느 정도 통신 병목(comms-bound) 상태임을 의미합니다. 어느 쪽이든, intensity가 낮고 일정하다는 사실은 대부분의 하드웨어에서 연산 병목(compute-bound) 상태가 되기 어렵다는 것을 의미합니다.</d-footnote>
+$N\rightarrow\infty$ 일 때. 따라서 내적(dot product)의 arithmetic intensity는 $\frac{1}{2}$ 입니다, 다시 말해, 내적은 로드된 바이트당 0.5개의 부동소수점 연산을 수행합니다. 이는 우리의 arithmetic intensity가 하드웨어의 것보다 낮아 통신 병목(communication-bound) 상태가 될 것임을 의미합니다.<d-footnote>위의 240이라는 수치는 여기서 올바른 비교는 아닙니다. 다음 섹션에서 보겠지만, 내적(dot-product)은 MXU가 아닌 VPU에서 수행되기 때문입니다. TPU v5p VPU는 약 7e12 FLOPs / second를 수행할 수 있어 critical intensity는 약 3이며, 이는 여기서도 여전히 어느 정도 통신 병목(comms-bound) 상태임을 의미합니다. 어느 쪽이든, intensity가 낮고 일정하다는 사실은 대부분의 하드웨어에서 연산 병목(compute-bound) 상태가 되기 어렵다는 것을 의미합니다.</d-footnote>
 
 ### Visualizing rooflines
 
@@ -158,7 +158,7 @@ $$\begin{equation}
 \text{Intensity}(\text{matmul}) = \frac{2BDF}{2BD + 2DF + 2BF} = \frac{BDF}{BD + DF + BF}
 \end{equation}$$
 
-"배치 크기" $B$가  $D$와 $F$에 비해서 작다고 가정하면 간단한 식으로 만들 수 있습니다. 그러면 다음과 같습니다.
+"배치 크기" $B$가 $D$와 $F$에 비해서 작다고 가정하면 간단한 식으로 만들 수 있습니다. 그러면 다음과 같습니다.
 
 $$\begin{equation}
 \frac{BDF}{BD + DF + BF} \approxeq \frac{BDF}{DF} = B
