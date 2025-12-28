@@ -1,6 +1,7 @@
 ---
 layout: distill
 title: "How to Think About GPUs"
+# permalink: /main/
 description: "우리는 Google의 TPU를 사랑하지만, GPU도 훌륭합니다. 이 장에서는 각 칩이 어떻게 작동하고, 서로 어떻게 네트워크로 연결되는지, 그리고 이것이 LLM에 어떤 의미를 갖는지, 특히 TPU와 비교하여 깊이 있게 살펴봅니다. NVIDIA, AMD, Intel 등 다양한 GPU 아키텍처가 있지만 여기서는 NVIDIA GPU에 중점을 둘 것입니다. 이 섹션은 <a href='https://jax-ml.github.io/scaling-book/tpus/'>2장</a>과 <a href='https://jax-ml.github.io/scaling-book/training'>5장</a>을 기반으로 하므로 먼저 읽어보시는 것을 권장합니다."
 date: 2025-08-18
 future: true
