@@ -366,7 +366,6 @@ imagemagick:
     - 1400
   input_directories:
     - assets/img/
-    - assets/gpu/
   input_formats:
     - ".jpg"
     - ".jpeg"
