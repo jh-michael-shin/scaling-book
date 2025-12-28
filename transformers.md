@@ -13,7 +13,7 @@ section_number: 4
 previous_section_url: "../sharding"
 previous_section_name: "Part 3: Sharding"
 
-next_section_url: ../training
+next_section_url: "../training"
 next_section_name: "Part 5: Training"
 
 giscus_comments: true
@@ -157,23 +157,23 @@ $$\frac{\partial L}{\partial A} = \frac{\partial L}{\partial C}\frac{\partial C}
 
 ## Transformer Accounting
 
-Transformers are the future. Well, they're the present at least. Maybe a few years ago, they were one of many architectures. But today, it's worth knowing pretty much every detail of the architecture. We won't reintroduce the architecture but [this blog](https://jalammar.github.io/illustrated-transformer/) and the [original Transformer paper](https://arxiv.org/abs/1706.03762) may be helpful references.
+Transformers는 미래입니다. 음, 적어도 현재는 그렇습니다. 몇 년 전만 해도 여러 아키텍처 중 하나였을지도 모릅니다. 하지만 오늘날에는 아키텍처의 거의 모든 세부 사항을 아는 것이 가치가 있습니다. 아키텍처를 다시 소개하지는 않겠지만, [이 블로그](https://jalammar.github.io/illustrated-transformer/)와 [원본 Transformer 논문](https://arxiv.org/abs/1706.03762)이 도움이 되는 참고 자료가 될 수 있습니다.
 
-Here's a basic diagram of the Transformer decoder architecture:
+다음은 Transformer 디코더 아키텍처의 기본 다이어그램입니다:
 
-{% include figure.liquid path="assets/img/transformer-diagram.png" class="img-fluid" caption="<b>Figure:</b> this diagram shows one layer of a standard Transformer and flows from top-to-bottom. We use a single-letter convention to describe the shapes and layouts of arrays in a Transformer, again showing contracting dimensions in red, and batched dimensions in blue. In a given operation, the input shape is given on top-left and the parameter shape is given on the top-right, with the resulting shape below, e.g. BTD is the input shape for the gating einsum and DF is the weight shape." %}
+{% include figure.liquid path="assets/img/transformer-diagram.png" class="img-fluid" caption="<b>Figure:</b> 이 다이어그램은 표준 트랜스포머의 한 레이어를 보여주며 위에서 아래로 흐릅니다. 트랜스포머의 배열 모양과 레이아웃을 설명하기 위해 단일 문자 규칙을 사용하며, 여기서도 축약 차원은 빨간색으로, 배치 차원은 파란색으로 표시합니다. 주어진 연산에서 입력 형태는 왼쪽 상단에, 파라미터 형태는 오른쪽 상단에 주어지며, 결과 형태는 아래에 있습니다. 예를 들어 BTD는 gating einsum의 입력 형태이고 DF는 가중치 형태입니다." %}
 
-**Note [gating einsum]**: The diagram above uses a "[gating einsums](https://arxiv.org/abs/2002.05202)”<d-cite key="glu"></d-cite> where we split the up-projection matrix into two matrices ($W_\text{In1}$ and $W_\text{In2}$ above) whose outputs are elementwise multiplied as a kind of "gating function”. Not all LLMs use this, so you will sometimes see a single $W_\text{In}$ matrix and a total MLP parameter count of 2DF instead of 3DF. Typically in this case, D and F will be scaled up to keep the parameter count the same as the 3 matrix case. With that said, some form of gating einsum is used by LLAMA, DeepSeek, and many other models.
+**Note [gating einsum]**: 위 다이어그램은 "[gating einsums](https://arxiv.org/abs/2002.05202)”<d-cite key="glu"></d-cite>을 사용합니다. 여기서는 up-projection 행렬을 두 개의 행렬($W_\text{In1}$ 및 $W_\text{In2}$)로 나누고, 그 출력들을 일종의 "게이팅 함수(gating function)"로서 원소별로 곱합니다. 모든 LLM이 이것을 사용하는 것은 아니므로, 때때로 단일 $W_\text{In}$ 행렬을 보고 총 MLP 파라미터 수가 3DF 대신 2DF인 경우를 볼 수 있습니다. 일반적으로 이 경우, 파라미터 수를 3 행렬 경우와 동일하게 유지하기 위해 D와 F를 확장합니다. 그렇긴 하지만, LLAMA, DeepSeek 및 기타 많은 모델에서 어떤 형태의 gating einsum이 사용됩니다.
 
-**Note 2 [MHA attention]**: With self-attention, T and S are the same but for cross-attention they may be different. With vanilla Multi-Head Attention (MHA), N and K are the same while for [Multi-Query Attention](https://arxiv.org/abs/1911.02150) (MQA)<d-cite key="mqa"></d-cite> K=1 and for [Grouped MQA](https://arxiv.org/abs/2305.13245) (GMQA)<d-cite key="gmqa"></d-cite> K merely has to divide N.
+**Note 2 [MHA attention]**: Self-attention의 경우 T와 S가 동일하지만, cross-attention의 경우 다를 수 있습니다. 바닐라 Multi-Head Attention (MHA)의 경우 N과 K가 동일한 반면, [Multi-Query Attention](https://arxiv.org/abs/1911.02150) (MQA)<d-cite key="mqa"></d-cite>의 경우 K=1이고, [Grouped MQA](https://arxiv.org/abs/2305.13245) (GMQA)<d-cite key="gmqa"></d-cite>의 경우 K가 N을 나누기만 하면 됩니다.
 
 ## Global FLOPs and Params Calculation
 
-For the below we're going to compute per-layer FLOPs to avoid having to stick factors of **L** everywhere.
+아래에서는 모든 곳에 **L** 요소를 붙이는 것을 피하기 위해 레이어당 FLOPs를 계산하겠습니다.
 
 ### MLPs
 
-The MLPs of a Transformer typically consist of 2 input matmuls that are element-wise combined and a single output matmul:
+Transformer의 MLP는 일반적으로 원소별로 결합되는 2개의 입력 matmul과 단일 출력 matmul로 구성됩니다:
 
 $$
 \begin{array}{ccc}
@@ -190,7 +190,7 @@ $$
 
 ### Attention
 
-For the generic grouped-query attention case with different **Q** and **KV** head numbers, let us assume equal head dimension H for **Q**,**K**,**V** projections, and estimate the cost of the **QKVO** matmuls:
+서로 다른 **Q** 및 **KV** 헤드 수를 가진 일반적인 grouped-query attention의 경우, **Q**,**K**,**V** projection에 대해 동일한 헤드 차원 H를 가정하고 **QKVO** matmul의 비용을 추정해 보겠습니다:
 
 $$
 \begin{array}{ccc}
@@ -204,7 +204,7 @@ A[B,T,\red{N}, \red{H}] \cdot W_{O}[\red{N}, \red{H}, D] & 6BTDNH & DNH \\[10pt]
 \end{array}
 $$
 
-The dot-product attention operation is more subtle, effectively being a $$TH \cdot HS$$ matmul batched over the $$B$$, $$K$$ dimensions, a softmax, and a $$TS \cdot SH$$ matmul again batched over the $$B$$, $$K$$ dimensions. We highlight the batched dims in blue:
+내적 어텐션 연산은 더 미묘합니다. 사실상 $$B$$, $$K$$차원에 배치된$$TH \cdot HS$$matmul, softmax, 그리고 다시$$B$$, $$K$$차원에 배치된$$TS \cdot SH$$ matmul입니다. 배치된 차원을 파란색으로 강조합니다:
 
 $$
 \begin{array}{cc}
@@ -220,11 +220,11 @@ S[\blue{B}, T, \red{S}, \blue{K}, G] \cdot V[\blue{B}, \red{S}, \blue{K}, H]
 \end{array}
 $$
 
-**Note [causal masking]**: Most recent transformers use a causal mask as opposed to full bidirectional attention. In this case the useful FLOPs of the dot product operations are reduced by a factor of 1/2. To achieve this reduction in practice we need to make use of an attention kernel, rather than a naive einsum.
+**Note [causal masking]**: 대부분의 최근 transformer는 완전 양방향 어텐션 대신 인과 마스크(causal mask)를 사용합니다. 이 경우 내적 연산의 유용한 FLOPs는 1/2로 줄어듭니다. 실제로 이 감소를 달성하려면 단순한 einsum이 아닌 attention kernel을 사용해야 합니다.
 
 ### Other Operations
 
-There are several other operations happening in a Transformer.  Layernorms are comparatively cheap and can be ignored for first-order cost estimates. There is also the final enormous (though not per-layer) unembedding matrix multiply.
+Transformer에는 몇 가지 다른 연산도 발생합니다. Layernorm은 비교적 저렴하므로 1차 비용 추정에서는 무시할 수 있습니다. 또한 마지막에 거대한(레이어별은 아니지만) unembedding 행렬 곱셈도 있습니다.
 
 $$
 \begin{array}{ccc}
@@ -237,7 +237,7 @@ $$
 
 ### General rule of thumb for Transformer FLOPs
 
-If we neglect the cost of dot-product attention for shorter-context training, then the total FLOPs across all layers is
+짧은 컨텍스트 훈련에 대해 내적 어텐션 비용을 무시한다면, 모든 레이어에 걸친 총 FLOPs는 다음과 같습니다.
 
 $$
 \begin{align*}
@@ -245,111 +245,99 @@ $$
 \end{align*}
 $$
 
-Leading to a famous rule of thumb for estimating dense Transformer FLOP count, ignoring the attention FLOPs. (Unembedding is another simple matmul with $6BSDV$ FLOPs and $DV$ params, and follows the same rule of thumb.)
+이는 어텐션 FLOPs를 무시하고 밀집(dense) Transformer FLOP 수를 추정하는 유명한 경험 법칙으로 이어집니다. (Unembedding은 $6BSDV$ FLOPs와 $DV$ 파라미터를 가진 또 다른 간단한 matmul이며, 동일한 경험 법칙을 따릅니다.)
 
 ### Fractional cost of attention with context length
 
-If we do account for dot-product attention above and assume $$F=4D$$, $$D=NH$$ (as is typical) and $$N=K$$:
+위에서 내적 어텐션을 고려하고 $$F=4D$$, $$D=NH$$(전형적인 경우), 그리고$$N=K$$라고 가정한다면:
 
 $$\small{\frac{\textrm{attention FLOPs}}{\textrm{matmul FLOPs}} = \frac{12BT^2NH}{18BTDF + 24BTDNH} = \frac{12BT^2D}{4*18 BTD^2 + 24 BTD^2} = \frac{12BT^2D}{96 BTD^2} = \frac{T}{8D}}$$
 
-So the takeaway is that **dot-product attention FLOPs only become dominant during training once T>8D**. For D ~ 8k, this would be ~64K tokens. This makes some sense, since it means as the MLP size increases, the attention FLOPs become less critical. For large models, the quadratic cost of attention is not actually a huge obstacle to longer context training. However, for smaller models, even e.g. Gemma-27B, D=4608 which means attention becomes dominant around 32k sequence lengths. Flash Attention also helps alleviate the cost of long-context, which we discuss briefly [in Appendix A](#appendix-a-how-does-flash-attention-work).
+따라서 요점은 **내적 어텐션 FLOPs는 T>8D일 때만 훈련 중에 지배적이 된다**는 것입니다. D ~ 8k의 경우, 이는 ~64K 토큰이 됩니다. 이는 MLP 크기가 커질수록 어텐션 FLOPs가 덜 중요해진다는 것을 의미하므로 일리가 있습니다. 대규모 모델의 경우, 어텐션의 2차 비용은 실제로 긴 컨텍스트 훈련에 큰 장애물이 되지 않습니다. 하지만 더 작은 모델, 예를 들어 Gemma-27B의 경우 D=4608이므로 32k 시퀀스 길이 정도에서 어텐션이 지배적이 됩니다. Flash Attention은 긴 컨텍스트의 비용을 완화하는 데 도움이 되며, 이에 대해서는 [Appendix A](#appendix-a-how-does-flash-attention-work)에서 간단히 논의합니다.
 
 ## Miscellaneous Math
 
 ### Sparsity and Mixture-of-Experts
 
-We'd be remiss not to briefly discuss Mixture of Experts (MoE) models<d-cite key="moe"></d-cite>, which replace the single dense MLP blocks in a standard Transformer with a set of independent MLPs that can be dynamically routed between. To a first approximation, **an MoE is just a normal dense model with E MLP blocks per layer**, instead of just one. Each token activates $k$ of these experts, typically $k \ll E$. The ratio $E / k$ is called the sparsity and is usually between 8 and 64 (e.g. [DeekSeek v3](https://arxiv.org/pdf/2412.19437) has effectively $k=8$, $E=256$). This increases the parameter count by $O(E)$, while multiplying the total number of activated parameters per token by $k$, compared with the dense version.
+Mixture of Experts (MoE) 모델<d-cite key="moe"></d-cite>에 대해 간단히 논의하지 않고 넘어갈 수 없습니다. MoE는 표준 Transformer의 단일 밀집 MLP 블록을 동적으로 라우팅할 수 있는 독립적인 MLP 세트로 대체합니다. 1차 근사로, **MoE는 단지 레이어당 하나가 아닌 E개의 MLP 블록을 가진 일반 밀집 모델입니다.** 각 토큰은 $k$개의 전문가를 활성화하며, 일반적으로 $k \ll E$입니다. 비율 $E / k$를 희소성(sparsity)이라고 하며 보통 8에서 64 사이입니다 (예: [DeekSeek v3](https://arxiv.org/pdf/2412.19437)는 사실상 $k=8$, $E=256$입니다). 이는 파라미터 수를 $O(E)$만큼 증가시키는 반면, 밀집 버전에 비해 토큰당 활성화된 파라미터 총 수에 $k$를 곱합니다.
 
-{% include figure.liquid path="assets/img/moe.png" class="img-fluid img-small" caption="<b>Figure:</b> an example MoE layer with $n$ experts. The gating expert routes each token to $k$ of them, and the output of those $k$ MLPs get summed. Our parameter count is $n$ times the size of each expert, but only $k$ are used for each token. <a href=\"https://deepgram.com/learn/mixture-of-experts-ml-model-guide\">Source</a>." %}
+{% include figure.liquid path="assets/img/moe.png" class="img-fluid img-small" caption="<b>Figure:</b> $n$개의 전문가가 있는 예제 MoE 레이어. 게이팅 전문가는 각 토큰을 그 중 $k$개로 라우팅하고, 그 $k$개 MLP의 출력이 합산됩니다. 우리의 파라미터 수는 각 전문가 크기의 $n$배이지만, 각 토큰에 대해 $k$개만 사용됩니다. <a href=\"https://deepgram.com/learn/mixture-of-experts-ml-model-guide\">출처</a>." %}
 
-Compared to a dense model, an MoE introduces new comms, primarily two AllToAlls (one before and one after the MoE block) that route tokens to the correct expert and bring them back to their home device.<d-footnote>Technically, this only happens if we are data or sequence sharded along the same axis as our experts.</d-footnote> However as we saw in the previous section, the cost of each AllToAll is only 1/4 that of a comparable AllGather along a single axis (for a bidirectional ring).
+밀집 모델과 비교할 때, MoE는 새로운 통신, 주로 두 개의 AllToAll(MoE 블록 전 하나, 후 하나)을 도입하여 토큰을 올바른 전문가에게 라우팅하고 다시 홈 디바이스로 가져옵니다.<d-footnote>엄밀히 말하면, 이는 전문가와 동일한 축을 따라 데이터 또는 시퀀스가 샤딩된 경우에만 발생합니다.</d-footnote> 그러나 이전 섹션에서 보았듯이, 각 AllToAll의 비용은 (양방향 링의 경우) 단일 축을 따른 유사한 AllGather의 1/4에 불과합니다.
 
 ### Gradient checkpointing
 
-Backpropagation as an algorithm trades memory for compute. Instead of a backward pass requiring $$O(n_\text{layers}^2)$$ FLOPs, **it requires $$O(n_\text{layers})$$ memory**, saving all intermediate activations generated during the forward pass. While this is better than quadratic compute, it's incredibly expensive memory-wise: a model with $$B * T=4M$$ (4M total tokens per batch), L=64, and D=8192 that avoids all unnecessary backward pass compute would have to save roughly $$2 * 20 * B * T * D * L = 84TB$$ of activations in bfloat16. 20 comes from (roughly) counting every intermediate node in the Transformer diagram above, since e.g.
+알고리즘으로서의 역전파는 메모리와 연산을 교환합니다. 역방향 패스가 $$O(n_\text{layers}^2)$$FLOPs를 요구하는 대신, **$$O(n_\text{layers})$$ 메모리를 요구하며**, 순방향 패스 중에 생성된 모든 중간 활성화를 저장합니다. 이것이 2차 연산보다 낫긴 하지만, 메모리 측면에서는 엄청나게 비쌉니다.$$B * T=4M$$(배치당 4M 총 토큰), L=64, D=8192인 모델이 불필요한 역방향 패스 연산을 모두 피하려면 bfloat16에서 대략$$2 * 20 * B * T * D * L = 84TB$$의 활성화를 저장해야 합니다. 20은 위 Transformer 다이어그램의 모든 중간 노드를 (대략) 계산한 것입니다. 예를 들어
 
 $$f(x) = \exp(g(x))$$
 
 $$\frac{df}{dx} = \exp(g(x)) \cdot \frac{dg}{dx}$$
 
-so to avoid recomputing we need to save $$g(x)$$ and $$\exp(g(x))$$ from the forward pass. To avoid saving this much memory, we can choose to only save some fraction of the intermediate activations. Here are a few strategies we use.
+이므로 재계산을 피하려면 순방향 패스에서 $$g(x)$$와 $$\exp(g(x))$$를 저장해야 합니다. 이렇게 많은 메모리를 저장하는 것을 피하기 위해, 중간 활성화의 일부만 저장하도록 선택할 수 있습니다. 다음은 우리가 사용하는 몇 가지 전략입니다.
 
-* **Block remat**: only save the input to each layer. This is the most aggressive method we use and only saves 1 checkpoint per layer, meaning we'd only save 4.2TB in the example above. This forces us to repeat essentially all forward pass FLOPs in the backward pass, meaning we increase our FLOPs from $$6ND$$ to roughly $$8ND$$.
-* **Big matmuls only:** another simple policy is to only save the outputs of large matmuls. This lets us avoid recomputing any large matmuls during the backward pass, but still makes us recompute other activation functions and parts of attention. This reduces 20 per layer to closer to 7 per layer.
+* **Block remat**: 각 레이어의 입력만 저장합니다. 이것은 우리가 사용하는 가장 공격적인 방법이며 레이어당 1개의 체크포인트만 저장하므로, 위 예제에서 4.2TB만 저장하게 됩니다. 이는 역방향 패스에서 사실상 모든 순방향 패스 FLOPs를 반복하게 하므로, FLOPs를 $$6ND$$에서 대략 $$8ND$$로 증가시킵니다.
+* **Big matmuls only:** 또 다른 간단한 정책은 큰 matmul의 출력만 저장하는 것입니다. 이를 통해 역방향 패스 중에 큰 matmul을 재계산하는 것을 피할 수 있지만, 여전히 다른 활성화 함수와 어텐션의 일부를 재계산하게 만듭니다. 이는 레이어당 20개를 7개 정도로 줄입니다.
 
-This by no means comprehensive. When using JAX, these are typically controlled by `jax.remat`/`jax.checkpoint` (you can read more [here](https://jax.readthedocs.io/en/latest/_autosummary/jax.checkpoint.html)).
+이것이 전부는 아닙니다. JAX를 사용할 때, 이들은 일반적으로 `jax.remat`/`jax.checkpoint`에 의해 제어됩니다 ([여기](https://jax.readthedocs.io/en/latest/_autosummary/jax.checkpoint.html)에서 더 읽어보세요).
 
 ### Key-Value (KV) caching
 
-As we'll see in [Section 7](../inference), LLM inference has two key parts, prefill and generation.
+[섹션 7](../inference)에서 보겠지만, LLM 추론에는 프리필(prefill)과 생성(generation)이라는 두 가지 핵심 부분이 있습니다.
 
-* **Prefill** processes a long prompt and saves its attention activations in a Key-Value Cache (KV Cache) for use in generation, specifically the key-value projections in the attention block.
-* **Generation** batches several of these KV caches together and samples tokens from each of them.
+* **Prefill**은 긴 프롬프트를 처리하고 생성에 사용하기 위해 어텐션 활성화를 Key-Value Cache (KV Cache)에 저장합니다. 구체적으로 어텐션 블록의 키-값 projection입니다.
+* **Generation**은 여러 KV 캐시를 함께 배치하고 각각에서 토큰을 샘플링합니다.
 
-Each KV cache is then effectively an array of size $[2, S, L, K, H]$ where the 2 accounts for the keys and values. This is quite large! The total size of the Key-Value cache in int8 is $2SLKH$. For a moderately-sized model with 8k context length, 64 layers, and $KH = NH = D = 8192$, this is $2 \cdot 8192 \cdot 64 \cdot 8192 = 8\text{GiB}$. You can see why we would want to use GMQA with $K \ll N$.
+그러면 각 KV 캐시는 사실상 $[2, S, L, K, H]$ 크기의 배열이 되며, 여기서 2는 키와 값을 설명합니다. 이것은 꽤 큽니다! int8에서 Key-Value 캐시의 총 크기는 $2SLKH$입니다. 8k 컨텍스트 길이, 64 레이어, $KH = NH = D = 8192$인 중간 크기 모델의 경우, 이는 $2 \cdot 8192 \cdot 64 \cdot 8192 = 8\text{GiB}$입니다. 왜 우리가 $K \ll N$인 GMQA를 사용하고 싶어하는지 알 수 있습니다.
 
 ## What Should You Take Away from this Section?
 
-* The overall parameters and FLOPs of a Transformer are fairly easy to calculate, and are summarized here, assuming MHA (with batch size B, vocab size V, a sequence of length T, D=d<sub>model</sub>, and F=d<sub>ff</sub>):
-
-
-<!-- $$
-\begin{array}{ccc}
-\textrm{Component} & \textrm{Params per layer} & \textrm{Training FLOPs per layer} \\
-\hline \\
-\textbf{MLP} & 3DF & 18BTDF \\[10pt]
-\textbf{Attention} & 4DNH & 24BTDNH + 12BT^2NH \\[10pt]
-\textbf{Other} & D & BTD \\[10pt]
-\textbf{Vocab} & DB \text{ (total, not per-layer)} & 12BTDV \\[10pt]
-\end{array}
-$$ -->
+* Transformer의 전체 파라미터와 FLOPs는 계산하기 꽤 쉬우며, MHA (배치 크기 B, 어휘 크기 V, 길이 T의 시퀀스, D=d<sub>model</sub>, F=d<sub>ff</sub>)를 가정할 때 다음과 같이 요약됩니다:
 
 
 | Component     | Params per layer          | Training FLOPs per layer      |
 | :------------ | :------------------------ | :---------------------------- |
-| **MLP**       | 3DF                       | 18BTDF                        |
+| **MLP** | 3DF                       | 18BTDF                        |
 | **Attention** | 4DNH                      | 24BTDNH \+ 12BT<sup>2</sup>NH |
-| **Other**     | D                         | BTD                           |
-| **Vocab**     | DV (total, not per-layer) | 12BTDV                        |
+| **Other** | D                         | BTD                           |
+| **Vocab** | DV (total, not per-layer) | 12BTDV                        |
 
-* The parameter count of the MLP block dominates the total parameter count and the MLP block also dominates the FLOPs budget as long as the sequence length $T < 8D$.
-* The total FLOPs budget during training is well approximated by $$6 \cdot \text{num_params} \cdot \text{num_tokens}$$ for reasonable context lengths.
-* During inference, our KV caches are roughly $$2 \cdot S \cdot L \cdot N \cdot H$$ per cache, although architectural modifications can often reduce this.
+* MLP 블록의 파라미터 수는 전체 파라미터 수를 지배하며, 시퀀스 길이 $T < 8D$인 한 MLP 블록이 FLOPs 예산도 지배합니다.
+* 훈련 중 총 FLOPs 예산은 합리적인 컨텍스트 길이에 대해 $$6 \cdot \text{num_params} \cdot \text{num_tokens}$$로 잘 근사됩니다.
+* 추론 중, KV 캐시는 캐시당 대략 $$2 \cdot S \cdot L \cdot N \cdot H$$이지만, 아키텍처 수정으로 종종 이를 줄일 수 있습니다.
 
 ## A Few Problems to Work
 
-**Question 1:** How many parameters does a model with $D=4096$, $F=4 \cdot D$, $V=32,000$, and $L=64$ have? What fraction of these are attention parameters? How large are our KV caches per token? *You can assume $N\cdot H=D$ and multi-head attention with int8 KVs.*
+**Question 1:** $D=4096$, $F=4 \cdot D$, $V=32,000$, $L=64$인 모델은 얼마나 많은 파라미터를 가질까요? 이 중 어텐션 파라미터의 비율은 얼마인가요? 토큰당 KV 캐시의 크기는 얼마인가요? *$N\cdot H=D$와 int8 KV를 사용하는 멀티 헤드 어텐션을 가정할 수 있습니다.*
 
-{% details Click here for the answer. %}
+{% details 답을 보려면 여기를 클릭하세요. %}
 
-1. The total parameters is roughly $$L \cdot (3DF + 4DNH + D) + 2DV$$. For the given numbers, this is $$64 \cdot (3 \cdot 4e3 \cdot 16e3 + 4 \cdot 4e3 \cdot 4e3 + 4e3) + 2 \cdot 4e3 \cdot 32e3 = 16e9$$, or 16B parameters.
-2. The ratio of attention parameters to total parameters in general is $$4DNH / (4DNH + 3DF) = 4D^2 / (4D^2 + 12D^2) = 1/4$$. This gives us roughly 1/4 of parameters are used in attention.
-3. Per token, our KV caches are $$2 \cdot L \cdot N \cdot H = 2 \cdot 64 \cdot 4096$$ in int8, which is `512kB / token`.
-
-{% enddetails %}
-
-**Question 2:** How many total FLOPs are required to perform A[B<sub>X</sub>, D<sub>Y</sub>] \*<sub>D</sub> W[D<sub>Y</sub>, F] on `{‘X': 4, ‘Y': 8, ‘Z': 4}`. How many FLOPs are performed by each TPU?
-
-{% details Click here for the answer. %}
-
-The total "theoretical” FLOPs of the operation is $$2 \cdot B \cdot D \cdot F$$. However, because the computation isn't sharded across the Z dimension, we're actually doing Z extra FLOPs, meaning $$2 \cdot B \cdot D \cdot F \cdot Z$$ total FLOPs. Since the computation is sharded across the other dimensions, the total per-device is roughly $$2 \cdot B \cdot D \cdot F / (X \cdot  Y)$$.
+1. 총 파라미터는 대략 $$L \cdot (3DF + 4DNH + D) + 2DV$$입니다. 주어진 숫자에 대해 이는 $$64 \cdot (3 \cdot 4e3 \cdot 16e3 + 4 \cdot 4e3 \cdot 4e3 + 4e3) + 2 \cdot 4e3 \cdot 32e3 = 16e9$$, 즉 16B 파라미터입니다.
+2. 어텐션 파라미터 대 전체 파라미터의 비율은 일반적으로 $$4DNH / (4DNH + 3DF) = 4D^2 / (4D^2 + 12D^2) = 1/4$$입니다. 이는 파라미터의 대략 1/4이 어텐션에 사용됨을 의미합니다.
+3. 토큰당, KV 캐시는 int8에서 $$2 \cdot L \cdot N \cdot H = 2 \cdot 64 \cdot 4096$$이며, 이는 `512kB / token`입니다.
 
 {% enddetails %}
 
-**Question 3:** How many FLOPs are involved in performing $A[I,J,K,L] * B[I,J,M,N,O] \rightarrow C[K,L,M,N,O]$?
+**Question 2:** `{‘X': 4, ‘Y': 8, ‘Z': 4}`에서 A[B<sub>X</sub>, D<sub>Y</sub>] \*<sub>D</sub> W[D<sub>Y</sub>, F]를 수행하는 데 필요한 총 FLOPs는 얼마인가요? 각 TPU에서 수행되는 FLOPs는 얼마인가요?
 
-{% details Click here for the answer. %}
+{% details 답을 보려면 여기를 클릭하세요. %}
 
-Following the rule above, we have I and J as contracting dimensions and K, L, M, N, and O as non-contracting dimensions. We have no "batching dimensions”, so this is just $$2 \cdot I \cdot J \cdot K \cdot L \cdot M \cdot N \cdot O$$, the sum of all the axes. If we had a shared axis, it would only be counted once.
+연산의 총 "이론적" FLOPs는 $$2 \cdot B \cdot D \cdot F$$입니다. 하지만 계산이 Z 차원에 대해 샤딩되지 않았기 때문에, 실제로 Z배 추가 FLOPs를 수행하고 있으므로 총 FLOPs는 $$2 \cdot B \cdot D \cdot F \cdot Z$$입니다. 계산이 다른 차원에 걸쳐 샤딩되므로, 디바이스당 총량은 대략 $$2 \cdot B \cdot D \cdot F / (X \cdot  Y)$$입니다.
 
 {% enddetails %}
 
-**Question 4:** What is the arithmetic intensity of self-attention (ignoring the Q/K/V/O projections)? *Give the answer as a function of the Q and KV lengths T and S.* At what context length is attention FLOPs-bound? Given the HBM bandwidth of our TPUs, plot the effective relative cost of attention to the FFW block as the context length grows.
+**Question 3:** $A[I,J,K,L] * B[I,J,M,N,O] \rightarrow C[K,L,M,N,O]$를 수행하는 데 얼마나 많은 FLOPs가 포함되나요?
 
-{% details Click here for the answer. %}
+{% details 답을 보려면 여기를 클릭하세요. %}
 
-Self-attention requires loading the $$Q$$, $$K$$, and $$V$$ activations, then computing $$\text{softmax}(Q \cdot K) \cdot V$$, then writing the result back to HBM. This will be done with Flash Attention so there are some caveats to this math, but basically in bf16 self-attention performs
+위 규칙에 따르면, I와 J는 축약 차원이고 K, L, M, N, O는 비축약 차원입니다. "배치 차원"이 없으므로, 이는 단지 $$2 \cdot I \cdot J \cdot K \cdot L \cdot M \cdot N \cdot O$$, 즉 모든 축의 곱입니다. 공유된 축이 있었다면 한 번만 계산되었을 것입니다.
+
+{% enddetails %}
+
+**Question 4:** Self-attention(Q/K/V/O projections 무시)의 arithmetic intensity는 얼마인가요? *Q와 KV 길이 T와 S의 함수로 답을 제시하세요.* 어떤 컨텍스트 길이에서 어텐션이 FLOPs-bound가 되나요? TPU의 HBM 대역폭이 주어졌을 때, 컨텍스트 길이가 증가함에 따라 FFW 블록에 대한 어텐션의 유효 상대 비용을 플롯하세요.
+
+{% details 답을 보려면 여기를 클릭하세요. %}
+
+Self-attention은 $$Q$$, $$K$$, $$V$$활성화를 로드한 다음,$$\text{softmax}(Q \cdot K) \cdot V$$를 계산하고, 결과를 HBM에 다시 써야 합니다. Flash Attention으로 수행되므로 이 수학에는 몇 가지 주의 사항이 있지만, 기본적으로 bf16 self-attention은 다음을 수행합니다.
 
 $$\text{Q[B,T,N,H]} \rightarrow_\text{reshape} \text{Q[B, T, K, G, H]} \cdot \text{K[B, S, K, H]} \rightarrow \text{O[B, T, S, K, G]}$$
 
@@ -357,108 +345,108 @@ $$U=\text{softmax}_S(\text{O[B, T, S, K, G]})$$
 
 $$\text{U[B, T, S, K, G]} \cdot \text{V[B, S, K, H]} \rightarrow \text{X[B, T, K, G, H]}$$
 
-So our total bytes is $$2 * \text{sizeof}(Q) + 2 * \text{sizeof(K or V)} = 4BTNH + 4BSKH = 4BHK * (TG + S)$$, total FLOPs is $$4BTSNH + O(BTSN)$$ and the arithmetic intensity is $$4BTSKGH / (4BHK * (TG + S))$$.
+따라서 총 바이트는 $$2 * \text{sizeof}(Q) + 2 * \text{sizeof(K or V)} = 4BTNH + 4BSKH = 4BHK * (TG + S)$$이고, 총 FLOPs는 $$4BTSNH + O(BTSN)$$이며 arithmetic intensity는 $$4BTSKGH / (4BHK * (TG + S))$$입니다.
 
-So basically, during prefill we have $$S=T$$ so we have an arithmetic intensity of $$4BT^2KGH / 4BHKT \cdot (G+1) = TG/(G + 1) = O(T)$$. During generation, $$T=1$$ so we have $$4BSKGH / (4BHK \cdot (G + S)) = SG / (G + S) \rightarrow G$$ assuming $$S$$ is very large. Depending on how you interpret the question, during prefill or training self-attention is compute bound at S=240 assuming no sequence sharding. During generation, we are never compute bound because $$G$$ is small. Nonetheless, however, you can see that increasing $$G$$ leads to us being closer to compute bound.
-
-{% enddetails %}
-
-**Question 5:** At what sequence length are self-attention FLOPs equal to the QKVO projection FLOPs?
-
-{% details Click here for the answer. %}
-
-This is purely a question of when $$24BTDNH == 12BT^2NH$$. Simplifying we get $$2D = T$$, so e.g. for $$D=4096$$, this is $$8192$$. This tells us that for most reasonable context lengths, matmul FLOPs are greater.
+따라서 기본적으로, 프리필 중에는 $$S=T$$이므로 arithmetic intensity는 $$4BT^2KGH / 4BHKT \cdot (G+1) = TG/(G + 1) = O(T)$$입니다. 생성 중에는 $$T=1$$이므로 $$4BSKGH / (4BHK \cdot (G + S)) = SG / (G + S) \rightarrow G$$이며 $$S$$가 매우 크다고 가정합니다. 질문을 어떻게 해석하느냐에 따라, 시퀀스 샤딩이 없다고 가정할 때 S=240에서 프리필 또는 훈련 중 self-attention은 compute bound입니다. 생성 중에는 $$G$$가 작기 때문에 결코 compute bound가 아닙니다. 그럼에도 불구하고, $$G$$를 늘리면 compute bound에 더 가까워지는 것을 볼 수 있습니다.
 
 {% enddetails %}
 
-**Question 6:** Say we only save the output of each of the 7 main matmuls in a Transformer layer during our forward pass (Q, K, V, O \+ the three FFW matrices). How many extra FLOPs do we need to "rematerialize” during the backwards pass?
+**Question 5:** 어떤 시퀀스 길이에서 self-attention FLOPs가 QKVO projection FLOPs와 같아지나요?
 
-{% details Click here for the answer. %}
+{% details 답을 보려면 여기를 클릭하세요. %}
 
-Saving only the seven matmul outputs (Q, K, V, O, W₁, W₂, W₃) means the backward pass must recompute the two attention matmuls
+이는 순전히 $$24BTDNH == 12BT^2NH$$일 때의 문제입니다. 단순화하면 $$2D = T$$가 되므로, 예를 들어 $$D=4096$$의 경우 $$8192$$입니다. 이는 대부분의 합리적인 컨텍스트 길이에 대해 matmul FLOPs가 더 크다는 것을 알려줍니다.
+
+{% enddetails %}
+
+**Question 6:** 순방향 패스 중에 Transformer 레이어의 7개 주요 matmul(Q, K, V, O + 세 개의 FFW 행렬) 각각의 출력만 저장한다고 가정해 봅시다. 역방향 패스 중에 "재생성(rematerialize)"하기 위해 얼마나 많은 추가 FLOPs가 필요한가요?
+
+{% details 답을 보려면 여기를 클릭하세요. %}
+
+7개의 matmul 출력(Q, K, V, O, W₁, W₂, W₃)만 저장한다는 것은 역방향 패스에서 두 개의 어텐션 matmul을 재계산해야 함을 의미합니다.
 
 $$QK^{\top} \quad\text{and}\quad \operatorname{softmax}(QK^{\top})V.$$
 
-Each is a $T \times T$ matmul batched over $B$ sequences and $N$ heads, so the additional FLOPs are
+각각은 $B$ 시퀀스와 $N$ 헤드에 걸쳐 배치된 $T \times T$ matmul이므로, 추가 FLOPs는 다음과 같습니다.
 
 $$4 \; B \, T^{2} \, N \, H.$$
 
-All other recomputed operations are only $O(BTD)$.
+다른 모든 재계산된 연산은 $O(BTD)$에 불과합니다.
 
 {% enddetails %}
 
-**Question 7:** DeepSeek v3 says it was trained for 2.79M H800 hours on 14.8T tokens ([source](https://arxiv.org/pdf/2412.19437v1)). Given that it has 37B activated parameters, roughly what hardware utilization did they achieve? *Hint: note that they used FP8 FLOPs without structured sparsity.*
+**Question 7:** DeepSeek v3는 14.8T 토큰에 대해 2.79M H800 시간 동안 훈련되었다고 합니다 ([출처](https://arxiv.org/pdf/2412.19437v1)). 37B 활성화 파라미터를 가지고 있다고 할 때, 대략 어느 정도의 하드웨어 활용률(utilization)을 달성했나요? *힌트: 구조적 희소성 없이 FP8 FLOPs를 사용했다는 점에 유의하세요.*
 
-{% details Click here for the answer. %}
+{% details 답을 보려면 여기를 클릭하세요. %}
 
-From the spec sheet [here](https://lenovopress.lenovo.com/lp1814.pdf), we find 3,026 TFLOPs/s of FP8 performance with sparsity, or typically half this (`1.513e15` FLOPs/s) without sparsity. 2.79M H800 hours means `2.79e6 * 1.513e15 * 60 * 60 = 1.52e25` total FLOPs. Given the activated parameter count of 37B, this training run should have used about `6 * 37e9 * 14.8e12 = 3.3e24` FLOPs. That means the FLOPs utilization is about `3.3e24 / 1.52e25 = 21.7%`.
-
-{% enddetails %}
-
-**Question 8:** Mixture of Experts (MoE) models have $E$ copies of a standard dense MLP block, and each token activates $k$ of these experts. What batch size in tokens is required to be compute-bound for an MoE with weights in int8 on TPU v5e? For DeepSeek, which has 256 (routed) experts and $k=8$, what is this number?
-
-{% details Click here for the answer. %}
-
-Because we have $E$ copies of each expert, in int8, we need to load $E \cdot D \cdot F$ bytes. Because each token activates $k$ experts, we have $2\cdot k \cdot B \cdot D \cdot F$ FLOPs. To be compute-bound with bfloat16 FLOPs, we need an arithmetic intensity over 240 which happens when $(2\cdot k \cdot BDF) / EDF > 240$ or $k \cdot B / E > 120$.
-
-Therefore, we need $B > 120 \cdot E / k$ to be compute bound. For DeepSeek, this gives us $B > 120 \cdot 256 / 8 = 3840$. This is a remarkably large batch size at generation time.
+[여기](https://lenovopress.lenovo.com/lp1814.pdf) 사양 시트에서, 희소성 포함 FP8 성능이 3,026 TFLOPs/s임을 알 수 있으며, 희소성 없이는 일반적으로 이의 절반(`1.513e15` FLOPs/s)입니다. 2.79M H800 시간은 `2.79e6 * 1.513e15 * 60 * 60 = 1.52e25` 총 FLOPs를 의미합니다. 37B 활성화 파라미터 수를 고려할 때, 이 훈련 실행은 약 `6 * 37e9 * 14.8e12 = 3.3e24` FLOPs를 사용했을 것입니다. 이는 FLOPs 활용률이 약 `3.3e24 / 1.52e25 = 21.7%`임을 의미합니다.
 
 {% enddetails %}
 
-<h3 markdown=1 class="next-section">That's it for Part 4! For Part 5 (about scaling Transformer training), [click here](../training)!</h3>
+**Question 8:** Mixture of Experts (MoE) 모델은 표준 밀집 MLP 블록의 $E$개 사본을 가지고 있으며, 각 토큰은 이 중 $k$개의 전문가를 활성화합니다. TPU v5e에서 int8 가중치를 가진 MoE가 compute-bound가 되기 위해 필요한 토큰 단위 배치 크기는 얼마인가요? 256개의 (라우팅된) 전문가와 $k=8$을 가진 DeepSeek의 경우, 이 숫자는 얼마인가요?
+
+{% details 답을 보려면 여기를 클릭하세요. %}
+
+각 전문가의 $E$개 사본을 가지고 있으므로, int8에서 $E \cdot D \cdot F$ 바이트를 로드해야 합니다. 각 토큰이 $k$개의 전문가를 활성화하므로, $2\cdot k \cdot B \cdot D \cdot F$ FLOPs를 가집니다. bfloat16 FLOPs로 compute-bound가 되려면 arithmetic intensity가 240을 넘어야 하며, 이는 $(2\cdot k \cdot BDF) / EDF > 240$ 또는 $k \cdot B / E > 120$일 때 발생합니다.
+
+따라서 compute bound가 되려면 $B > 120 \cdot E / k$여야 합니다. DeepSeek의 경우, 이는 $B > 120 \cdot 256 / 8 = 3840$을 제공합니다. 이는 생성 시에 놀라울 정도로 큰 배치 크기입니다.
+
+{% enddetails %}
+
+<h3 markdown=1 class="next-section">파트 4는 여기까지입니다! 파트 5(트랜스포머 훈련 확장에 관한 내용)를 보려면, [여기를 클릭하세요](../training)!</h3>
 
 ## Appendix
 
 ### Appendix A: How does Flash Attention work?
 
-The traditional objection to scaling Transformers to very long context is that the attention FLOPs and memory usage scale quadratically with context length. While it's true that the attention QK product has shape $[B, S, T, N]$ where B is the batch size, S and T are the Q and K sequence dims, and N is the number of heads, this claim comes with some serious caveats:
+트랜스포머를 매우 긴 컨텍스트로 확장하는 것에 대한 전통적인 반대 의견은 어텐션 FLOPs와 메모리 사용량이 컨텍스트 길이에 따라 2차적으로 증가한다는 것입니다. 어텐션 QK 곱이 $[B, S, T, N]$ 형태를 가지며 여기서 B는 배치 크기, S와 T는 Q와 K 시퀀스 차원, N은 헤드 수라는 것은 사실이지만, 이 주장에는 몇 가지 심각한 주의 사항이 따릅니다:
 
-1. As we noted in Section 4, even though this is quadratic, the attention FLOPs only dominated when $$S > 8 \cdot D$$, and especially during training the memory of a single attention matrix is small compared to all of the weights and activation checkpoints living in memory, especially when sharded.
-2. We don't need to materialize the full attention matrix in order to compute attention! We can compute local sums and maxes and avoid ever materializing more than a small chunk of the array. While the total FLOPs is still quadratic, we drastically reduce memory pressure.
+1. 섹션 4에서 언급했듯이, 이것이 2차적이라 할지라도 어텐션 FLOPs는 $$S > 8 \cdot D$$일 때만 지배적이었으며, 특히 훈련 중에 단일 어텐션 행렬의 메모리는 메모리에 있는 모든 가중치 및 활성화 체크포인트에 비해 작습니다(특히 샤딩될 때).
+2. 어텐션을 계산하기 위해 전체 어텐션 행렬을 구체화(materialize)할 필요가 없습니다! 로컬 합계와 최대값을 계산하고 배열의 작은 청크 이상을 구체화하는 것을 피할 수 있습니다. 총 FLOPs는 여전히 2차적이지만, 메모리 압박을 크게 줄입니다.
 
-This second observation was first made by [Rabe et al. 2021](https://arxiv.org/abs/2112.05682) and later in the [Flash Attention paper](https://arxiv.org/abs/2205.14135) (Dao et al. 2022). The basic idea is to compute the attention in chunks of K/V, where we compute the local softmax and some auxiliary statistics, then pass them onto the next chunk which combines them with its local chunk. Specifically, we compute
+이 두 번째 관찰은 [Rabe et al. 2021](https://arxiv.org/abs/2112.05682)에서 처음 이루어졌고 나중에 [Flash Attention 논문](https://arxiv.org/abs/2205.14135) (Dao et al. 2022)에서 이루어졌습니다. 기본 아이디어는 K/V의 청크로 어텐션을 계산하는 것인데, 여기서 로컬 softmax와 일부 보조 통계를 계산한 다음, 이를 다음 청크로 전달하여 로컬 청크와 결합합니다. 구체적으로 우리는 다음을 계산합니다.
 
-1. **M:** The running max of $$q \cdot k$$ over the sequence dimension
-2. **O:** The running full attention softmax over the sequence dimension
-3. **L:** The running denominator $$\sum_i (q \cdot k_i - \text{running max})$$
+1. **M:** 시퀀스 차원에 대한 $$q \cdot k$$의 실행 최대값(running max)
+2. **O:** 시퀀스 차원에 대한 실행 전체 어텐션 softmax
+3. **L:** 실행 분모(running denominator) $$\sum_i (q \cdot k_i - \text{running max})$$
 
-With these, we can compute the new max, the new running sum, and the new output with only a constant amount of memory. To give a sketchy description of how this works, attention is roughly this operation:
+이것들로 우리는 일정한 양의 메모리만으로 새로운 최대값, 새로운 실행 합계, 새로운 출력을 계산할 수 있습니다. 이것이 어떻게 작동하는지 대략적으로 설명하자면, 어텐션은 대략 다음과 같은 연산입니다:
 
 $$\text{Attn}(Q, K, V) = \sum_i \frac{\exp(Q \cdot K_i - \max_j Q \cdot K_j) V_i}{\sum_l \exp(Q \cdot K_l - \max_j Q \cdot K_j)}$$
 
-The max is subtracted for numerical stability and can be added without affecting the outcome since $$\sum_i \exp(a_i + b) = \exp(b) \sum \exp(a)$$. Looking just at the denominator above,  if we imagine having two contiguous chunks of key vectors, $$K^1$$ and $$K^2$$ and we compute the local softmax sums $$L^1$$ and $$L^2$$ for each
+최대값은 수치적 안정성을 위해 빼지며, $$\sum_i \exp(a_i + b) = \exp(b) \sum \exp(a)$$이므로 결과에 영향을 주지 않고 더할 수 있습니다. 위의 분모만 보면, 두 개의 연속적인 키 벡터 청크 $$K^1$$과 $$K^2$$가 있다고 상상하고 각각에 대해 로컬 softmax 합 $$L^1$$과 $$L^2$$를 계산한다고 합시다.
 
 $$L^1 = \sum_i \exp(Q \cdot K_i^1 - \max_j Q \cdot K_j^1)$$
 
 $$L^2 = \sum_i \exp(Q \cdot K_i^2 - \max_j Q \cdot K_j^2)$$
 
-Then we can combine these into the full softmax sum for these two chunks together by using
+그러면 다음을 사용하여 이 두 청크를 합친 전체 softmax 합으로 결합할 수 있습니다.
 
 $$L^\text{combined} = \exp(M^1 - \max(M^1, M^2)) \cdot L^1 + \exp(M^2 - \max(M^1, M^2)) \cdot L^2$$
 
-where
+여기서
 
 $$M^1 = \max_j Q \cdot K_j^1 \text{ and } M^2 = \max_j Q \cdot K_j^2$$
 
-This can be done for the full softmax as well, giving us a way of accumulating arbitrarily large softmax sums. Here's the full algorithm from the Flash Attention paper.
+이는 전체 softmax에 대해서도 수행할 수 있어, 임의로 큰 softmax 합을 누적하는 방법을 제공합니다. 다음은 Flash Attention 논문의 전체 알고리즘입니다.
 
 {% include figure.liquid path="assets/img/flash-algo.png" class="img-fluid" %}
 
-From a hardware standpoint, this lets us fit our chunk of Q into VMEM (what the algorithm above calls on-chip SRAM) so we only have to load the KV chunks on each iteration, reducing the arithmetic intensity. We can also keep the running statistics in VMEM.
+하드웨어 관점에서 볼 때, 이를 통해 Q 청크를 VMEM(위 알고리즘에서는 온칩 SRAM이라고 함)에 맞출 수 있으므로 각 반복마다 KV 청크만 로드하면 되어 arithmetic intensity를 줄일 수 있습니다. 또한 실행 통계(running statistics)를 VMEM에 유지할 수 있습니다.
 
-One last subtle point worth emphasizing is an attention softmax property that's used to make the Flash VJP (reverse mode derivative) calculation practical for training.  If we define an intermediate softmax array as:
+강조할 만한 마지막 미묘한 점은 훈련을 위한 Flash VJP (역방향 모드 미분) 계산을 실용적으로 만드는 데 사용되는 어텐션 softmax 속성입니다. 중간 softmax 배열을 다음과 같이 정의하면:
 
 $$S_{ij} = \frac{e^{\tau q_i \cdot k_j}}{\sum_k e^{\tau q_i \cdot k_j}}$$
 
-In attention, we obtain *dS* from reverse-mode *dO* and *V* arrays:
+어텐션에서 역방향 모드 *dO* 및 *V* 배열로부터 *dS*를 얻습니다:
 
 $$dS_{ij} = dO_{id} \cdot_d V_{jd} = \sum_d dO_{id} V_{jd}$$
 
-During the backpropagation of this gradient to Q and K
+이 그래디언트를 Q와 K로 역전파하는 동안
 
 $$d(q_i \cdot k_j) = (dS_{ij} - S_{ij} \cdot_j dS_{ij}) S_{ij}$$
 
-We exploit an identity that allows us to exchange a contraction along the large key **length** dimension with a local contraction along the feature **depth** dimension.
+우리는 큰 키 **길이** 차원을 따른 축약을 특징 **깊이** 차원을 따른 로컬 축약으로 교환할 수 있게 하는 항등식을 활용합니다.
 
 $$\begin{align*}
 S_{ij} \cdot_j dS_{ij} &= \sum_j \frac{e^{\tau q_i \cdot k_j}}{\sum_k e^{\tau q_i \cdot k_k}} \sum_d dO_{id} V_{jd} \\
@@ -467,4 +455,4 @@ S_{ij} \cdot_j dS_{ij} &= \sum_j \frac{e^{\tau q_i \cdot k_j}}{\sum_k e^{\tau q_
 &= dO_{id} \cdot_d O_{id}
 \end{align*}$$
 
-This replacement is crucial for being able to implement a sequence-block *local* calculation for the VJP, and enables further clever sharding schemes like ring attention.
+이 교체는 VJP에 대해 시퀀스 블록 *로컬* 계산을 구현할 수 있게 하는 데 중요하며, 링 어텐션과 같은 더 기발한 샤딩 계획을 가능하게 합니다.
