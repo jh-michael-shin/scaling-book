@@ -1,0 +1,201 @@
+<!DOCTYPE html> <html> <head> <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"> <meta charset="utf-8"> <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no"> <meta http-equiv="X-UA-Compatible" content="IE=edge"> <title> Training LLaMA 3 on TPUs | How To Scale Your Model </title> <meta name="author" content=" "> <meta name="description" content="이전 섹션에서 배운 내용을 바탕으로 TPU v5p에서 LLaMA 3 모델을 훈련하는 방법을 자세히 살펴보겠습니다. 모델의 크기는 얼마나 클까요? 다양한 구성에서 훈련 비용은 얼마나 들까요? 샤딩은 어떻게 이루어질까요? 이전 섹션의 내용이 실제 모델에 어떻게 적용되는지 대략적인 추정치를 통해 알아보겠습니다."> <meta name="keywords" content="scaling, jax, llms, transformers, tpus, google, deepmind, parallelism, pallas"> <link rel="stylesheet" href="/scaling-book/assets/css/bootstrap.min.css?a4b3f509e79c54a512b890d73235ef04"> <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/mdbootstrap@4.20.0/css/mdb.min.css" integrity="sha256-jpjYvU3G3N6nrrBwXJoVEYI/0zw8htfFnhT9ljN3JJw=" crossorigin="anonymous"> <link defer rel="stylesheet" href="/scaling-book/assets/css/academicons.min.css?f0b7046b84e425c55f3463ac249818f5"> <link defer rel="stylesheet" href="/scaling-book/assets/css/scholar-icons.css?62b2ac103a88034e6882a5be5f3e2772"> <link defer rel="stylesheet" type="text/css" href="https://fonts.googleapis.com/css?family=Roboto:300,400,500,700|Roboto+Slab:100,300,400,500,700|Material+Icons&amp;display=swap"> <link defer rel="stylesheet" href="/scaling-book/assets/css/jekyll-pygments-themes-vs.css?4ee1a2facd1a8a76347f4bd43a740500" media="" id="highlight_theme_light"> <link rel="shortcut icon" href="/scaling-book/assets/img/favicon.ico?fddbd8c2ec231ba2060e67c85de32a55"> <link rel="stylesheet" href="/scaling-book/assets/css/main.css?d41d8cd98f00b204e9800998ecf8427e"> <link rel="canonical" href="https://jh-michael-shin.github.io/scaling-book/applied-training/"> <script src="/scaling-book/assets/js/theme.js?9a0c749ec5240d9cda97bc72359a72c0"></script> <link defer rel="stylesheet" href="/scaling-book/assets/css/jekyll-pygments-themes-native.css?5847e5ed4a4568527aa6cfab446049ca" media="none" id="highlight_theme_dark"> <script>
+    initTheme();
+  </script> <script src="/scaling-book/assets/js/distillpub/template.v2.js"></script> <script src="/scaling-book/assets/js/distillpub/transforms.v2.js"></script> <style type="text/css">{{page._styles}}</style> </head> <body> <d-front-matter> <script async type="text/json">
+      {
+            "title": "Training LLaMA 3 on TPUs",
+            "description": "이전 섹션에서 배운 내용을 바탕으로 TPU v5p에서 LLaMA 3 모델을 훈련하는 방법을 자세히 살펴보겠습니다. 모델의 크기는 얼마나 클까요? 다양한 구성에서 훈련 비용은 얼마나 들까요? 샤딩은 어떻게 이루어질까요? 이전 섹션의 내용이 실제 모델에 어떻게 적용되는지 대략적인 추정치를 통해 알아보겠습니다.",
+            "published": "February 04, 2025",
+            "authors": [
+              
+              {
+                "author": "Jacob Austin",
+                "authorURL": "https://www.jacobaustin.org/",
+                "affiliations": [
+                  {
+                    "name": "Google DeepMind",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Sholto Douglas",
+                "authorURL": "https://x.com/_sholtodouglas",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Roy Frostig",
+                "authorURL": "https://cs.stanford.edu/~rfrostig/",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Anselm Levskaya",
+                "authorURL": "https://anselmlevskaya.com/",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Charlie Chen",
+                "authorURL": "https://x.com/charliexychen",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Sharad Vikram",
+                "authorURL": "https://sharadvikram.com/",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Federico Lebron",
+                "authorURL": "https://fedelebron.com/",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Peter Choy",
+                "authorURL": "https://x.com/pchoy95",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Vinay Ramasesh",
+                "authorURL": "https://x.com/vinayramasesh",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Albert Webson",
+                "authorURL": "https://representation.ai/",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Reiner Pope<sup>*</sup>",
+                "authorURL": "https://x.com/reinerpope",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              }
+              
+            ],
+            "katex": {
+              "delimiters": [
+                {
+                  "left": "$",
+                  "right": "$",
+                  "display": false
+                },
+                {
+                  "left": "$$",
+                  "right": "$$",
+                  "display": true
+                }
+              ]
+            }
+          }
+    </script> </d-front-matter> <header> <script>
+    function goToTop() {
+      document.body.scrollTop = 0; // For Safari
+      document.documentElement.scrollTop = 0; // For Chrome, Firefox, IE and Opera
+    }
+
+    // When the user scrolls down 20px from the top of the document, show the button
+    window.onscroll = function() {scrollFunction()};
+
+    function scrollFunction() {
+      // Get the button:
+      let mybutton = document.getElementById("top-button");
+
+      if (document.body.scrollTop > 40 || document.documentElement.scrollTop > 40) {
+        mybutton.style.display = "block";
+      } else {
+        mybutton.style.display = "none";
+      }
+  }
+  </script> <nav id="navbar" class="navbar navbar-light navbar-expand-sm fixed-top" role="navigation"> <div class="container"> <a class="navbar-brand title font-weight-lighter" href="/scaling-book"> How To Scale Your Model </a> <button class="navbar-toggler collapsed ml-auto" type="button" data-toggle="collapse" data-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation"> <span class="sr-only">Toggle navigation</span> <span class="icon-bar top-bar"></span> <span class="icon-bar middle-bar"></span> <span class="icon-bar bottom-bar"></span> </button> <div class="left-button section-button"><a href="../training"><svg viewbox="-78.5 0 512 512"><path d="M257 64L291 98 128 262 291 426 257 460 61 262 257 64Z"></path></svg></a></div> <div class="right-button section-button"><a href="../inference"><svg viewbox="-78.5 0 512 512"><path d="M98 460L64 426 227 262 64 98 98 64 294 262 98 460Z"></path></svg></a></div> <div class="collapse navbar-collapse text-right" id="navbarNav"> <ul class="navbar-nav ml-auto flex-nowrap"> <li class="nav-item "> <a class="nav-link" href="/scaling-book/"> </a> </li> <li class="nav-item nav-hidden"><a class="nav-link" onclick="goToTop()" id="top-button" style="display: none;">Back to Top</a></li> <li class="nav-item nav-hidden"><p class="nav-link"></p></li> <li class="nav-item nav-hidden"><a class="nav-link" href="../training">Previous Part</a></li> <li class="nav-item nav-hidden"><a class="nav-link" href="../inference">Next Part</a></li> <li class="nav-item nav-hidden"><p class="nav-link"></p></li> <li class="nav-item dropdown "> <a class="nav-link dropdown-toggle" href="#" id="navbarDropdown" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Sections </a> <div class="dropdown-menu dropdown-menu-right" aria-labelledby="navbarDropdown"> <a class="dropdown-item " href="/scaling-book/index">Part 0. Introduction</a> <a class="dropdown-item " href="/scaling-book/roofline">Part 1. Intro to Rooflines</a> <a class="dropdown-item " href="/scaling-book/tpus">Part 2. All About TPUs</a> <a class="dropdown-item " href="/scaling-book/sharding">Part 3. Sharded Matmuls</a> <a class="dropdown-item " href="/scaling-book/transformers">Part 4. Transformers</a> <a class="dropdown-item " href="/scaling-book/training">Part 5. Training</a> <a class="dropdown-item " href="/scaling-book/applied-training">Part 6. Training LLaMA</a> <a class="dropdown-item " href="/scaling-book/inference">Part 7. Inference</a> <a class="dropdown-item " href="/scaling-book/applied-inference">Part 8. Serving LLaMA</a> <a class="dropdown-item " href="/scaling-book/profiling">Part 9. Profiling</a> <a class="dropdown-item " href="/scaling-book/jax-stuff">Part 10. All About JAX</a> <a class="dropdown-item " href="/scaling-book/conclusion">Part 11. Conclusions</a> <a class="dropdown-item " href="/scaling-book/gpus">Part 12. GPUs</a> </div> </li> <li class="toggle-container"> <button id="light-toggle" title="Change theme"> <i class="ti ti-sun-moon" id="light-toggle-system"></i> <i class="ti ti-moon-filled" id="light-toggle-dark"></i> <i class="ti ti-sun-filled" id="light-toggle-light"></i> </button> </li> </ul> </div> </div> </nav> <progress id="progress" value="0"> <div class="progress-container"> <span class="progress-bar"></span> </div> </progress> </header> <div class="post distill"> <d-title> <h1>Training LLaMA 3 on TPUs</h1> <p>Part 6 of <a href="/scaling-book">How To Scale Your Model</a> (<a href="../training">Part 5: Training</a> | <a href="../inference">Part 7: Inference</a>)</p> <p>이전 섹션에서 배운 내용을 바탕으로 TPU v5p에서 LLaMA 3 모델을 훈련하는 방법을 자세히 살펴보겠습니다. 모델의 크기는 얼마나 클까요? 다양한 구성에서 훈련 비용은 얼마나 들까요? 샤딩은 어떻게 이루어질까요? 이전 섹션의 내용이 실제 모델에 어떻게 적용되는지 대략적인 추정치를 통해 알아보겠습니다.</p> </d-title> <d-byline></d-byline> <d-article> <d-contents> <nav class="l-text figcaption"> <h3>Contents</h3> <div> <a href="#what-does-llama-3-look-like">What does LLaMA 3 look like?</a> </div> <div> <a href="#counting-parameters-and-flops">Counting parameters and FLOPs</a> </div> <div> <a href="#how-to-shard-llama-3-70b-for-training">How to shard LLaMA 3-70B for training</a> </div> <div> <a href="#worked-problems">Worked Problems</a> </div> </nav> </d-contents> <p class="takeaway"> <b>번역 안내:</b> 원저자(<a href="https://www.jacobaustin.org/" rel="external nofollow noopener" target="_blank">Jacob Austin</a>)의 허락을 받아 원문을 번역 중입니다.<br> 해당 글의 1인칭은 원문 저자를 지칭합니다.<br> 원문: <a href="https://jax-ml.github.io/scaling-book/" rel="external nofollow noopener" target="_blank">How to Scale Your Model</a><br> 번역: <a href="https://www.linkedin.com/in/michael-shin-3522a6189/" rel="external nofollow noopener" target="_blank">신종훈</a></p> <p><em>이 섹션의 목표는 이전 섹션의 결과를 매우 실용적인 문제인 LLaMA 3 모델 패밀리(herd) 훈련에 적용하는 것입니다. 이전 섹션들과 달리, 독자 여러분이 직접 많은 작업을 해보기를 권장합니다. 이러한 이유로 각 섹션의 정답을 숨겨두었으니 먼저 스스로 답해 보시기 바랍니다. 펜을 잡고 직접 손으로 계산해 보세요!</em></p> <h3 id="what-does-llama-3-look-like">What does LLaMA 3 look like?</h3> <p>LLaMA-3 모델 패밀리<d-cite key="llama3"></d-cite>는 3가지 주요 모델을 포함합니다: LLaMA 3 8B, 70B, 그리고 405B. 우리는 주로 70B에 초점을 맞추고, 8B와 405B는 마지막 문제 섹션에서 여러분이 직접 탐구하도록 남겨두겠습니다. 다음은 LLaMA <a href="https://huggingface.co/meta-llama/Meta-Llama-3-70B/blob/main/config.json" rel="external nofollow noopener" target="_blank">HuggingFace 페이지</a>에서 가져온 LLaMA 3-70B의 아키텍처입니다.</p> <table> <thead> <tr> <th><strong>hyperparam</strong></th> <th><strong>value</strong></th> </tr> </thead> <tbody> <tr> <td>\(n_\text{layers}\) (L)</td> <td>80</td> </tr> <tr> <td>\(d_\text{model}\) (D)</td> <td>8,192</td> </tr> <tr> <td>\(d_{ff}\) (F)</td> <td>28,672</td> </tr> <tr> <td>\(n_\text{heads}\) (N)</td> <td>64</td> </tr> <tr> <td>\(n_\text{kv_heads}\) (K)</td> <td>8</td> </tr> <tr> <td>\(d_\text{qkv}\) (H)</td> <td>128</td> </tr> <tr> <td>\(n_\text{embeddings}\) (V)</td> <td>128,256</td> </tr> </tbody> </table> <p>이 정보를 찾는 것이 얼마나 쉬운지 강조하기 위해, 매핑과 함께 config 자체를 보여드립니다:</p> <figure> <picture> <source class="responsive-img-srcset" srcset="/scaling-book/assets/img/llama-json-480.webp 480w,/scaling-book/assets/img/llama-json-800.webp 800w,/scaling-book/assets/img/llama-json-1400.webp 1400w," type="image/webp" sizes="95vw"></source> <img src="/scaling-book/assets/img/llama-json.png" class="img-fluid" width="100%" height="auto" loading="lazy" onerror="this.onerror=null; $('.responsive-img-srcset').remove();"> </picture> </figure> <p><em>다양한 오픈 소스 LLM에 대해 이러한 수치들을 큰 표로 만들어두면, 각 모델이 내린 설계 결정을 빠르게 비교하는 데 유용합니다.</em></p> <h3 id="counting-parameters-and-flops">Counting parameters and FLOPs</h3> <p><strong>Question:</strong> 이 표를 바탕으로 LLaMA 3-70B의 파라미터 수를 계산할 수 있을까요? 🤫 <a href="../transformers">섹션 4</a>의 내용을 적용하여 70B가 나오는지 확인해 봅시다!</p> <details><summary>정답을 보려면 여기를 클릭하세요 (먼저 생각해 보세요!).</summary> <table> <thead> <tr> <th>param</th> <th>formula</th> <th>count</th> </tr> </thead> <tbody> <tr> <td>FFW params</td> <td>d_model * d_ff * 3 (for gelu + out-projection) * n_layers</td> <td>8,192 * 8,192 * 3.5 * 3 * 80 = <strong>56.3e9</strong> </td> </tr> <tr> <td>Vocab params</td> <td>2 (input and output embeddings) * n_embeddings * d_model</td> <td>2 * 128,256 * 8,192 = <strong>2.1e9</strong> </td> </tr> <tr> <td>Attention params</td> <td>n_layers * [ 2 (for q embedding and concatenated output projection) * d_model * n_heads * d_qkv + 2 (for k and v) * d_model * n_kv_heads * d_qkv]</td> <td>80 * (2 * 8,192 * 64 * 128 + 2 * 8,192 * 8 * 128) = <strong>12e9</strong> </td> </tr> <tr> <td> </td> <td> </td> <td>56.3e9 + 2.1e9 + 12e9 = <strong>70.4e9</strong> </td> </tr> </tbody> </table> <p>훌륭합니다! 우리가 예상한 숫자가 나왔습니다. 예상대로 FFW 파라미터가 전체 파라미터 수의 대부분을 차지하지만, Attention도 무시할 수 없는 수준임을 알 수 있습니다.</p> </details> <p class="takeaway"><strong>Takeaway</strong>: MLP 블록의 3가지 큰 가중치 행렬은 Transformer 내의 다른 모든 배열보다 훨씬 크기 때문에, 모델 메모리나 FLOPs를 추론할 때 다른 파라미터들은 거의 무시해도 무방합니다. LLaMA 3-70B의 경우, 70B 파라미터 중 56B를 차지합니다.</p> <p>이제 FLOPs를 살펴보겠습니다! <em><a href="../transformers">섹션 4</a>의 훈련에 대한 일반적인 규칙을 기억하세요.</em></p> <p><strong>Question:</strong> LLaMA-3는 훈련 단계당 토큰별로 얼마나 많은 FLOPs를 수행할까요? <em>이는 전체 훈련 과정이 얼마나 비쌀지 결정하는 데 도움이 됩니다.</em></p> <details><summary>정답을 보려면 여기를 클릭하세요 (먼저 생각해 보세요!).</summary> <p><strong>Answer</strong>: <a href="../transformers">섹션 4</a>에서 보았듯이, 토큰당 대략 \(6 \cdot \text{param count}\) FLOPs를 수행하므로, 여기서는 대략 <code class="language-plaintext highlighter-rouge">6 * 70e9 = 4.2e11</code> FLOPs / token입니다. 이는 단계당 토큰별로 약 0.5 TFLOP입니다. compute-bound라고 가정할 때, 단일 TPU v5p 칩에서 완벽한 FLOPs 활용을 가정하면 대략 <code class="language-plaintext highlighter-rouge">4.2e11 / 4.59E+14 = 1ms</code>가 걸립니다.</p> </details> <p><strong>Question:</strong> LLaMA 3는 약 15조 토큰으로 훈련되었습니다. 총 FLOPs는 얼마인가요?</p> <details><summary>정답을 보려면 여기를 클릭하세요 (먼저 생각해 보세요!).</summary> <p><strong>Answer</strong>: 간단합니다. <code class="language-plaintext highlighter-rouge">4.2e11 * 15e12 = 6.3e24 FLOPs</code>입니다. 6.3 yottaFLOPs입니다. 엄청난 양이죠! 단일 TPU에서는 <code class="language-plaintext highlighter-rouge">6.3e24 / 4.59E+14 = 435년</code>이 걸립니다. 이것 또한 엄청난 시간입니다!</p> </details> <p><strong>Question:</strong> 16x20x28 = 8960개의 칩으로 구성된 전체 TPU v5p pod에서 훈련하고 싶다고 가정해 봅시다. compute-bound라고 가정할 때, bfloat16에서 40% MFU로 훈련하는 데 얼마나 걸릴까요?</p> <details><summary>정답을 보려면 여기를 클릭하세요 (먼저 생각해 보세요!).</summary> <p><strong>Answer</strong>: 각 TPU v5p는 초당 4.59e14 FLOPs를 수행할 수 있다는 것을 알고 있습니다. 40% MFU에서, 이는 약 <code class="language-plaintext highlighter-rouge">T = 6.3e24 / (8960 * 4.59e14 * 0.4) = 3.8e6 초</code>가 걸립니다. <strong>약 44일입니다!</strong> 40% MFU를 실제로 달성할 수 있다고 가정하면 꽤 합리적입니다.</p> </details> <p><strong>Question:</strong> LLaMA 3-70B는 약 4M 토큰의 배치 크기로 사전 훈련되었습니다. 이 배치 크기로 훈련하려면 최소 몇 개의 TPU가 필요할까요? <em>bfloat16 파라미터와 float32 옵티마이저 상태를 가정하고, 레이어당 4번 그라디언트를 체크포인트한다고 가정합니다.</em></p> <details><summary>정답을 보려면 여기를 클릭하세요 (먼저 생각해 보세요!).</summary> <p><strong>Answer</strong>: 이 질문은 주로 메모리 사용량에 관한 것입니다. 사용 가능한 컴퓨팅에 대한 유일한 엄격한 제약 조건이기 때문입니다. 훈련 중에 HBM의 세 가지 주요 용도는 모델 파라미터, 옵티마이저 상태, 그리고 그라디언트 체크포인트입니다. bfloat16 가중치, float32 옵티마이저 상태, 그리고 <em>매우</em> 보수적인 그라디언트 체크포인팅 방식(레이어당 4회)을 가정하면 다음과 같습니다:</p> <table> <tbody> <tr> <td><strong>Params</strong></td> <td>2 * 70GB</td> <td>~140GB</td> </tr> <tr> <td><strong>Optimizer State</strong></td> <td>8 * 70GB</td> <td>~560GB</td> </tr> <tr> <td><strong>Gradient Checkpoints</strong></td> <td>2 * 8192 * 4e6 * 4 * 80</td> <td>~20.9TB</td> </tr> <tr> <td><strong>Total</strong></td> <td> </td> <td>~21.6TB</td> </tr> </tbody> </table> <p>여기서 합계는 약 21.6TB입니다. 매우 보수적인 체크포인팅 방식을 사용하더라도 그라디언트 체크포인팅이 메모리 상황을 강력하게 지배한다는 것을 알 수 있습니다. 기술적으로는 레이어당 1개의 체크포인트로 가거나 마이크로배칭을 할 수 있지만, 이는 합리적인 그림입니다. 이러한 가정하에, 각 TPU v5p는 96GB의 HBM을 가지고 있으므로 <code class="language-plaintext highlighter-rouge">21.6e12 / 96e9 = 225</code> TPU가 필요합니다. 사실 그리 많지 않습니다!</p> <p><em>왜 이렇게 하지 않을까요?</em> 글쎄요, 훈련하는 데 <code class="language-plaintext highlighter-rouge">44일 * 8960 / 225 = 1752일</code>이 걸리기 때문입니다. 거의 4년입니다. <strong>너무 깁니다.</strong> 하지만 이것은 우리가 메모리에 묶여서가 아니라 추가적인 FLOPs가 필요해서 이러한 대규모 클러스터를 사용하고 있음을 분명히 보여줍니다.</p> </details> <p><strong>Question:</strong> 위 질문과 동일한 가정하에, 8960개의 TPU v5p 칩을 사용한다면 칩당 얼마나 많은 메모리를 사용하게 될까요?</p> <details><summary>정답을 보려면 여기를 클릭하세요 (먼저 생각해 보세요!).</summary> <p><strong>Answer</strong>: 총 메모리는 여전히 약 21.6TB이므로, 칩당 약 2.4GB를 사용하게 되는데, 이는 기본적으로 아무것도 아닙니다. 훨씬 더 공격적인 체크포인팅, 예를 들어 레이어당 12개의 체크포인트를 수행하더라도 칩당 8GB에 불과합니다. 이러한 규모의 훈련 중에는 메모리 부족 문제와는 거리가 멉니다.</p> </details> <p class="takeaway"><strong>Takeaways</strong>: 기술적으로는 매우 작은 토폴로지에서도 매우 큰 모델을 훈련할 수 있지만, 시간이 오래 걸릴 수 있다는 주의점이 있습니다. 훈련 실행의 총 FLOPs를 계산할 수 있으면 적당한 MFU와 알려진 토폴로지를 가정하여 훈련 시간을 대략적으로 추정할 수 있습니다.</p> <h3 id="how-to-shard-llama-3-70b-for-training">How to shard LLaMA 3-70B for training</h3> <p>위의 설정을 유지하여 8960개의 칩으로 구성된 TPU v5p pod에서 4M 토큰 배치 크기(배치당 길이 4096인 시퀀스 1024개)로 LLaMA 3-70B를 훈련하고 싶다고 가정해 봅시다. 이 모델에 대한 최적의 샤딩 전략이 무엇인지 논의해 봅시다.</p> <p><strong>Question:</strong> 위의 가정하에, FSDP만으로 모델을 훈련할 수 있을까요? 먼저 시퀀스/컨텍스트 병렬 처리를 할 수 없다고 가정해 봅시다. <em>이것은 간단하고 작동한다면 추가적인 통신을 도입하지 않으므로 가장 먼저 떠올려야 할 아이디어입니다.</em></p> <details><summary>정답을 보려면 여기를 클릭하세요 (먼저 생각해 보세요!).</summary> <p><strong>Answer</strong>: 이 답변은 약간 깐깐할 수 있습니다. 위에서 언급했듯이 LLaMA 3-70B는 초기에 길이 4K의 시퀀스로 훈련되므로, 4M 토큰의 배치 크기는 1024의 <em>시퀀스 배치 크기</em>를 제공합니다. 즉, <em>데이터 병렬 처리를 수행해야 하는 시퀀스가 그만큼이기 때문에</em> 실제로는 최대 1024개의 칩까지만 순수 데이터 병렬 처리/FSDP를 수행할 수 있습니다. 따라서 “추가 통신 없는 완전 데이터 병렬 처리”라는 단순한 의미에서의 대답은 ‘아니요’입니다. 다음 질문은 이에 대해 약간 덜 깐깐한 버전으로 답변할 것입니다.</p> </details> <p><strong>Question:</strong> 시퀀스 샤딩을 하지 않는다는 요구 사항을 완화해 봅시다. 배치 <em>및</em> 시퀀스 축 모두에 대해 FSDP를 수행할 수 있다고 허용하면, 8960개의 칩에서 FSDP만으로 LLaMA 3-70B를 훈련할 수 있을까요?</p> <details><summary>정답을 보려면 여기를 클릭하세요 (먼저 생각해 보세요!).</summary> <p><strong>Answer</strong>: 이제 시퀀스/컨텍스트 병렬 처리도 허용했으므로 훨씬 더 확장할 수 있습니다. 먼저 디바이스당 배치 크기를 계산해 봅시다. 8960방향 FSDP를 수행하면 TPU당 배치 크기는 <code class="language-plaintext highlighter-rouge">4 * 1024 * 1024 / 8960 = 468 토큰</code>이 됩니다. 이전 섹션에서 우리는 \(\text{per device batch size} &lt; 2550 / M_X\)일 때 FSDP에 의해 ICI-bound가 된다는 것을 알았습니다. 여기서 전체 3D pod로 3개의 축을 할당할 수 있으므로, 하한은 850이 되는데, 우리는 이보다 훨씬 아래에 있습니다. <strong>따라서 3개의 축을 사용하더라도 대답은 ‘아니요’입니다. 우리는 확실히 통신 병목(communication-bound) 상태가 될 것입니다.</strong></p> </details> <p><strong>Question:</strong> 이제 혼합 텐서 병렬 처리와 FSDP를 살펴봅시다. compute-bound를 유지할 수 있는 조합이 존재할까요? 그렇다면 FSDP와 텐서 병렬 처리를 얼마나 수행해야 할까요?</p> <details><summary>정답을 보려면 여기를 클릭하세요 (먼저 생각해 보세요!).</summary> <p><strong>Answer</strong>: 먼저 이것이 맞는지 확인해 봅시다. 칩당 배치 크기가 $2550^2 / 2F = 113$보다 작으면 comms-bound가 된다는 것을 알고 있습니다. 위에서 보았듯이 우리는 이보다 약간 높습니다. 훌륭합니다! 이제 최적의 FSDP 양을 선택하기 위해 다음 공식을 사용할 수 있습니다.</p> \[X_{opt} = \sqrt{\frac{2BN}{F}} = \sqrt{\frac{2 \cdot 4.19e6 \cdot 8960}{28672}} = 1618\] <p>합리적인 2의 배수로 반올림하면, 대략 2048방향 FSDP와 4방향 텐서 병렬 처리가 나옵니다. 잘 작동할 것입니다!</p> </details> <p class="takeaway"><strong>Takeaways</strong>: 전체 TPU v5p pod에서 4M 토큰 배치 크기로 LLaMA-3를 훈련할 때, 데이터 병렬 처리(1024방향), 시퀀스 병렬 처리(2방향), 텐서 병렬 처리(4방향)를 혼합하면 통신 병목 없이 훈련할 수 있습니다. 순수 FSDP나 FSDP + 시퀀스 병렬 처리를 시도하면 comms-bound가 될 것입니다. 이전 섹션에서 우리가 만든 방정식들은 매우 실용적입니다.</p> <h2 id="worked-problems">Worked Problems</h2> <p><strong>Question 1 [Scaling LLaMA 70B to more chips]:</strong> 동일한 배치 크기로 4개의 pod에서 LLaMA 3-70B를 훈련하고 싶다고 가정해 봅시다. 어떤 병렬 처리 방식을 사용해야 할까요? compute 또는 communication bound 중 어느 것이 될까요? 훈련하는 데 대략 얼마나 걸릴까요? <em>올바른 루프라인 한계를 사용해야 합니다.</em></p> <details><summary>정답을 보려면 여기를 클릭하세요.</summary> <p><strong>Answer</strong>: 4개의 pod(35,840 칩)에서 훈련하려면 DCN을 넘어야 합니다. DCN 연산 강도는 약 71,360임을 기억하세요. 4M 배치 크기를 4개의 pod에 분산하면 pod당 1M 토큰이 되며, 이는 한계를 훨씬 상회하므로 DCN 병목은 없습니다. 하지만 pod 내에서는 칩당 배치 크기가 <code class="language-plaintext highlighter-rouge">4M / 35840 = 111 토큰</code>이 됩니다. 이는 $2550^2 / 2F = 113$ 한계보다 아주 약간 낮습니다. 따라서 우리는 약간 comms-bound가 될 수 있지만, 거의 경계선에 있습니다. 최적의 전략은 가능한 한 많은 텐서 병렬 처리를 사용하는 것입니다.</p> <p>훈련 시간은 칩 수가 4배 늘었으므로 대략 1/4로 줄어들어 약 11일이 걸릴 것입니다.</p> </details> <p><strong>Question 2 [LLaMA 405B]:</strong></p> <p>(a) LLaMA 3-405B <a href="https://huggingface.co/meta-llama/Llama-3.1-405B/blob/main/config.json" rel="external nofollow noopener" target="_blank">config</a>를 사용하여 위와 같은 주요 하이퍼파라미터 표를 작성하세요. 이 모델의 총 파라미터 수는 얼마인가요? 훈련 단계당 FLOPs는 얼마인가요? 15T 토큰에 대해 훈련하면 얼마나 많은 FLOPs를 수행하나요?</p> <p>(b) 8개의 TPU v5p pod에서 훈련하고 싶다고 가정해 봅시다. 어떤 병렬 처리 방식을 사용해야 할까요? 훈련하는 데 얼마나 걸릴까요? compute 또는 comms bound 중 어느 것이 될까요?</p> <details><summary>정답을 보려면 여기를 클릭하세요.</summary> <p>(a) | <strong>hyperparam</strong> | <strong>value</strong> | | ————————— | ——— | | \(n_\text{layers}\) (L) | 126 | | \(d_\text{model}\) (D) | 16,384 | | \(d_{ff}\) (F) | 53,248 | | \(n_\text{heads}\) (N) | 128 | | \(n_\text{kv_heads}\) (K) | 8 | | \(d_\text{qkv}\) (H) | 128 | | \(n_\text{embeddings}\) (V) | 128,256 |</p> <ul> <li>FFW 파라미터: 126 * 16384 * 53248 * 3 = 3.3e11</li> <li>Attention 파라미터: 126 * (2 * 16384 * 128 * 128 + 2 * 16384 * 8 * 128) = 7.2e10</li> <li>Vocab 파라미터: 2 * 128256 * 16384 = 4.2e9</li> <li>총 파라미터: ~406B. 거의 정확합니다!</li> </ul> <p>토큰당 FLOPs: 6 * 406e9 = 2.44e12. 총 FLOPs: 2.44e12 * 15e12 = 3.66e25.</p> <p>(b) 8개의 pod에는 71,680개의 칩이 있습니다. 총 훈련 시간은 <code class="language-plaintext highlighter-rouge">3.66e25 / (71680 * 4.59e14 * 0.4) = 2.78e6 초</code> 또는 약 32일입니다. 배치 크기가 4M(70B와 동일)이라고 가정하면 칩당 배치 크기는 <code class="language-plaintext highlighter-rouge">4M / 71680 = 55</code> 토큰입니다. 한계는 $2550^2 / (2 * 53248) = 61$입니다. 우리는 한계 바로 아래에 있으므로 약간 comms-bound가 될 것입니다. 하지만 16M과 같은 더 큰 배치 크기를 사용한다면(모델이 더 크기 때문에 합리적일 수 있음) 괜찮을 것입니다. 우리는 pod 간에는 데이터 병렬 처리를, pod 내에서는 혼합 FSDP/TP를 사용할 것입니다.</p> </details> <h3 class="next-section">섹션 6은 여기까지입니다. 트랜스포머 추론에 관한 섹션 7을 보려면 <a href="../inference">여기</a>를 클릭하세요.</h3> </d-article> <d-appendix> <d-footnote-list></d-footnote-list> <d-citation-list></d-citation-list> <div class="base-grid appendix-entry"> <h3 style="grid-column: 0;">Miscellaneous</h3> <p class="author-footnote" style="grid-column: text;"><sup>*</sup>Work done at Google DeepMind, now at MatX.</p> </div> <div class="base-grid appendix-entry"> <h3 style="grid-column: 0;">Citation</h3> <p class="author-footnote">For attribution in academic contexts, please cite this work as:</p> <div class="author-footnote"> <div class="language-bibtex highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="c">Austin et al., "How to Scale Your Model", Google DeepMind, online, 2025.</span>
+</code></pre></div></div> </div> <p class="author-footnote">or as a BibTeX entry:</p> <div class="author-footnote"> <div class="language-bibtex highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="nc">@article</span><span class="p">{</span><span class="nl">scaling-book</span><span class="p">,</span>
+      <span class="na">title</span> <span class="p">=</span> <span class="s">{How to Scale Your Model}</span><span class="p">,</span>
+      <span class="na">author</span> <span class="p">=</span> <span class="s">{Austin, Jacob and Douglas, Sholto and Frostig, Roy and Levskaya, Anselm and Chen, Charlie and Vikram, Sharad
+      and Lebron, Federico and Choy, Peter and Ramasesh, Vinay and Webson, Albert and Pope, Reiner}</span><span class="p">,</span>
+      <span class="na">publisher</span> <span class="p">=</span> <span class="s">{Google DeepMind}</span><span class="p">,</span>
+      <span class="na">howpublished</span> <span class="p">=</span> <span class="s">{Online}</span><span class="p">,</span>
+      <span class="na">note</span> <span class="p">=</span> <span class="s">{Retrieved from https://jax-ml.github.io/scaling-book/}</span><span class="p">,</span>
+      <span class="na">year</span> <span class="p">=</span> <span class="s">{2025}</span>
+    <span class="p">}</span>
+</code></pre></div></div> </div> </div> </d-appendix> <d-bibliography src="/scaling-book/assets/bibliography/main.bib"></d-bibliography> <div id="giscus_thread" style="max-width: 930px; margin: 0 auto;"> <script>
+      let giscusTheme = determineComputedTheme();
+      let giscusAttributes = {
+        src: 'https://giscus.app/client.js',
+        'data-repo': 'jax-ml/scaling-book',
+        'data-repo-id': '',
+        'data-category': 'General',
+        'data-category-id': '',
+        'data-mapping': 'title',
+        'data-strict': '1',
+        'data-reactions-enabled': '1',
+        'data-emit-metadata': '0',
+        'data-input-position': 'bottom',
+        'data-theme': giscusTheme,
+        'data-loading': '1',
+        'data-lang': 'en',
+        crossorigin: 'anonymous',
+        async: '',
+      };
+
+      let giscusScript = document.createElement('script');
+      Object.entries(giscusAttributes).forEach(([key, value]) => giscusScript.setAttribute(key, value));
+      document.getElementById('giscus_thread').appendChild(giscusScript);
+    </script> <noscript>Please enable JavaScript to view the <a href="http://giscus.app/?ref_noscript" rel="external nofollow noopener" target="_blank">comments powered by giscus.</a> </noscript> </div> </div> <footer class="sticky-bottom mt-5" role="contentinfo"> <div class="container"> © Copyright 2025 . Powered by <a href="https://jekyllrb.com/" target="_blank" rel="external nofollow noopener">Jekyll</a> with <a href="https://github.com/alshedivat/al-folio" rel="external nofollow noopener" target="_blank">al-folio</a> theme. Hosted by <a href="https://pages.github.com/" target="_blank" rel="external nofollow noopener">GitHub Pages</a>. </div> </footer> <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js" integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=" crossorigin="anonymous"></script> <script src="/scaling-book/assets/js/bootstrap.bundle.min.js"></script> <script src="https://cdn.jsdelivr.net/npm/mdbootstrap@4.20.0/js/mdb.min.js" integrity="sha256-NdbiivsvWt7VYCt6hYNT3h/th9vSTL4EDWeGs5SN3DA=" crossorigin="anonymous"></script> <script defer src="https://cdn.jsdelivr.net/npm/medium-zoom@1.1.0/dist/medium-zoom.min.js" integrity="sha256-ZgMyDAIYDYGxbcpJcfUnYwNevG/xi9OHKaR/8GK+jWc=" crossorigin="anonymous"></script> <script defer src="/scaling-book/assets/js/zoom.js?85ddb88934d28b74e78031fd54cf8308"></script> <script src="/scaling-book/assets/js/no_defer.js?2781658a0a2b13ed609542042a859126"></script> <script defer src="/scaling-book/assets/js/common.js?e0514a05c5c95ac1a93a8dfd5249b92e"></script> <script defer src="/scaling-book/assets/js/copy_code.js?12775fdf7f95e901d7119054556e495f" type="text/javascript"></script> <script defer src="/scaling-book/assets/js/jupyter_new_tab.js?d9f17b6adc2311cbabd747f4538bb15f"></script> <script defer type="text/javascript" id="MathJax-script" src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js" integrity="sha256-MASABpB4tYktI2Oitl4t+78w/lyA+D7b/s9GEP0JOGI=" crossorigin="anonymous"></script> <script src="/scaling-book/assets/js/mathjax-setup.js?70d799092f862ad98c7876aa47712e20"></script> <script defer src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6" crossorigin="anonymous"></script> <script defer src="/scaling-book/assets/js/progress-bar.js?2f30e0e6801ea8f5036fa66e1ab0a71a" type="text/javascript"></script> <script src="/scaling-book/assets/js/vanilla-back-to-top.min.js?f40d453793ff4f64e238e420181a1d17"></script> <script>
+    addBackToTop();
+  </script> </body> </html>

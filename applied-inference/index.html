@@ -1,0 +1,243 @@
+<!DOCTYPE html> <html> <head> <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"> <meta charset="utf-8"> <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no"> <meta http-equiv="X-UA-Compatible" content="IE=edge"> <title> Serving LLaMA 3-70B on TPUs | How To Scale Your Model </title> <meta name="author" content=" "> <meta name="description" content="TPU v5e에서 LLaMA 3-70B 모델을 서빙하는 방법을 자세히 살펴보겠습니다. roofline에서 서빙하는 데 비용이 얼마나 들까요? KV 캐시의 크기는 얼마일까요? 어떤 배치 크기를 사용해야 할까요? 추론 중 파라미터와 활성화는 어떻게 샤딩될까요? 프로덕션 환경에서의 지연 시간과 처리량에 대한 대략적인 추정치를 계산해 보겠습니다."> <meta name="keywords" content="scaling, jax, llms, transformers, tpus, google, deepmind, parallelism, pallas"> <link rel="stylesheet" href="/scaling-book/assets/css/bootstrap.min.css?a4b3f509e79c54a512b890d73235ef04"> <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/mdbootstrap@4.20.0/css/mdb.min.css" integrity="sha256-jpjYvU3G3N6nrrBwXJoVEYI/0zw8htfFnhT9ljN3JJw=" crossorigin="anonymous"> <link defer rel="stylesheet" href="/scaling-book/assets/css/academicons.min.css?f0b7046b84e425c55f3463ac249818f5"> <link defer rel="stylesheet" href="/scaling-book/assets/css/scholar-icons.css?62b2ac103a88034e6882a5be5f3e2772"> <link defer rel="stylesheet" type="text/css" href="https://fonts.googleapis.com/css?family=Roboto:300,400,500,700|Roboto+Slab:100,300,400,500,700|Material+Icons&amp;display=swap"> <link defer rel="stylesheet" href="/scaling-book/assets/css/jekyll-pygments-themes-vs.css?4ee1a2facd1a8a76347f4bd43a740500" media="" id="highlight_theme_light"> <link rel="shortcut icon" href="/scaling-book/assets/img/favicon.ico?fddbd8c2ec231ba2060e67c85de32a55"> <link rel="stylesheet" href="/scaling-book/assets/css/main.css?d41d8cd98f00b204e9800998ecf8427e"> <link rel="canonical" href="https://jh-michael-shin.github.io/scaling-book/applied-inference/"> <script src="/scaling-book/assets/js/theme.js?9a0c749ec5240d9cda97bc72359a72c0"></script> <link defer rel="stylesheet" href="/scaling-book/assets/css/jekyll-pygments-themes-native.css?5847e5ed4a4568527aa6cfab446049ca" media="none" id="highlight_theme_dark"> <script>
+    initTheme();
+  </script> <script src="/scaling-book/assets/js/distillpub/template.v2.js"></script> <script src="/scaling-book/assets/js/distillpub/transforms.v2.js"></script> <style type="text/css">{{page._styles}}</style> </head> <body> <d-front-matter> <script async type="text/json">
+      {
+            "title": "Serving LLaMA 3-70B on TPUs",
+            "description": "TPU v5e에서 LLaMA 3-70B 모델을 서빙하는 방법을 자세히 살펴보겠습니다. roofline에서 서빙하는 데 비용이 얼마나 들까요? KV 캐시의 크기는 얼마일까요? 어떤 배치 크기를 사용해야 할까요? 추론 중 파라미터와 활성화는 어떻게 샤딩될까요? 프로덕션 환경에서의 지연 시간과 처리량에 대한 대략적인 추정치를 계산해 보겠습니다.",
+            "published": "February 04, 2025",
+            "authors": [
+              
+              {
+                "author": "Jacob Austin",
+                "authorURL": "https://www.jacobaustin.org/",
+                "affiliations": [
+                  {
+                    "name": "Google DeepMind",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Sholto Douglas",
+                "authorURL": "https://x.com/_sholtodouglas",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Roy Frostig",
+                "authorURL": "https://cs.stanford.edu/~rfrostig/",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Anselm Levskaya",
+                "authorURL": "https://anselmlevskaya.com/",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Charlie Chen",
+                "authorURL": "https://x.com/charliexychen",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Sharad Vikram",
+                "authorURL": "https://sharadvikram.com/",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Federico Lebron",
+                "authorURL": "https://fedelebron.com/",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Peter Choy",
+                "authorURL": "https://x.com/pchoy95",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Vinay Ramasesh",
+                "authorURL": "https://x.com/vinayramasesh",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Albert Webson",
+                "authorURL": "https://representation.ai/",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              },
+              
+              {
+                "author": "Reiner Pope<sup>*</sup>",
+                "authorURL": "https://x.com/reinerpope",
+                "affiliations": [
+                  {
+                    "name": "",
+                    "url": ""
+                  }
+                ]
+              }
+              
+            ],
+            "katex": {
+              "delimiters": [
+                {
+                  "left": "$",
+                  "right": "$",
+                  "display": false
+                },
+                {
+                  "left": "$$",
+                  "right": "$$",
+                  "display": true
+                }
+              ]
+            }
+          }
+    </script> </d-front-matter> <header> <script>
+    function goToTop() {
+      document.body.scrollTop = 0; // For Safari
+      document.documentElement.scrollTop = 0; // For Chrome, Firefox, IE and Opera
+    }
+
+    // When the user scrolls down 20px from the top of the document, show the button
+    window.onscroll = function() {scrollFunction()};
+
+    function scrollFunction() {
+      // Get the button:
+      let mybutton = document.getElementById("top-button");
+
+      if (document.body.scrollTop > 40 || document.documentElement.scrollTop > 40) {
+        mybutton.style.display = "block";
+      } else {
+        mybutton.style.display = "none";
+      }
+  }
+  </script> <nav id="navbar" class="navbar navbar-light navbar-expand-sm fixed-top" role="navigation"> <div class="container"> <a class="navbar-brand title font-weight-lighter" href="/scaling-book"> How To Scale Your Model </a> <button class="navbar-toggler collapsed ml-auto" type="button" data-toggle="collapse" data-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation"> <span class="sr-only">Toggle navigation</span> <span class="icon-bar top-bar"></span> <span class="icon-bar middle-bar"></span> <span class="icon-bar bottom-bar"></span> </button> <div class="left-button section-button"><a href="../inference"><svg viewbox="-78.5 0 512 512"><path d="M257 64L291 98 128 262 291 426 257 460 61 262 257 64Z"></path></svg></a></div> <div class="right-button section-button"><a href="../profiling"><svg viewbox="-78.5 0 512 512"><path d="M98 460L64 426 227 262 64 98 98 64 294 262 98 460Z"></path></svg></a></div> <div class="collapse navbar-collapse text-right" id="navbarNav"> <ul class="navbar-nav ml-auto flex-nowrap"> <li class="nav-item "> <a class="nav-link" href="/scaling-book/"> </a> </li> <li class="nav-item nav-hidden"><a class="nav-link" onclick="goToTop()" id="top-button" style="display: none;">Back to Top</a></li> <li class="nav-item nav-hidden"><p class="nav-link"></p></li> <li class="nav-item nav-hidden"><a class="nav-link" href="../inference">Previous Part</a></li> <li class="nav-item nav-hidden"><a class="nav-link" href="../profiling">Next Part</a></li> <li class="nav-item nav-hidden"><p class="nav-link"></p></li> <li class="nav-item dropdown "> <a class="nav-link dropdown-toggle" href="#" id="navbarDropdown" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Sections </a> <div class="dropdown-menu dropdown-menu-right" aria-labelledby="navbarDropdown"> <a class="dropdown-item " href="/scaling-book/index">Part 0. Introduction</a> <a class="dropdown-item " href="/scaling-book/roofline">Part 1. Intro to Rooflines</a> <a class="dropdown-item " href="/scaling-book/tpus">Part 2. All About TPUs</a> <a class="dropdown-item " href="/scaling-book/sharding">Part 3. Sharded Matmuls</a> <a class="dropdown-item " href="/scaling-book/transformers">Part 4. Transformers</a> <a class="dropdown-item " href="/scaling-book/training">Part 5. Training</a> <a class="dropdown-item " href="/scaling-book/applied-training">Part 6. Training LLaMA</a> <a class="dropdown-item " href="/scaling-book/inference">Part 7. Inference</a> <a class="dropdown-item " href="/scaling-book/applied-inference">Part 8. Serving LLaMA</a> <a class="dropdown-item " href="/scaling-book/profiling">Part 9. Profiling</a> <a class="dropdown-item " href="/scaling-book/jax-stuff">Part 10. All About JAX</a> <a class="dropdown-item " href="/scaling-book/conclusion">Part 11. Conclusions</a> <a class="dropdown-item " href="/scaling-book/gpus">Part 12. GPUs</a> </div> </li> <li class="toggle-container"> <button id="light-toggle" title="Change theme"> <i class="ti ti-sun-moon" id="light-toggle-system"></i> <i class="ti ti-moon-filled" id="light-toggle-dark"></i> <i class="ti ti-sun-filled" id="light-toggle-light"></i> </button> </li> </ul> </div> </div> </nav> <progress id="progress" value="0"> <div class="progress-container"> <span class="progress-bar"></span> </div> </progress> </header> <div class="post distill"> <d-title> <h1>Serving LLaMA 3-70B on TPUs</h1> <p>Part 8 of <a href="/scaling-book">How To Scale Your Model</a> (<a href="../inference">Part 7: Inference</a> | <a href="../profiling">Part 9: Profiling</a>)</p> <p>TPU v5e에서 LLaMA 3-70B 모델을 서빙하는 방법을 자세히 살펴보겠습니다. roofline에서 서빙하는 데 비용이 얼마나 들까요? KV 캐시의 크기는 얼마일까요? 어떤 배치 크기를 사용해야 할까요? 추론 중 파라미터와 활성화는 어떻게 샤딩될까요? 프로덕션 환경에서의 지연 시간과 처리량에 대한 대략적인 추정치를 계산해 보겠습니다.</p> </d-title> <d-byline></d-byline> <d-article> <d-contents> <nav class="l-text figcaption"> <h3>Contents</h3> <div> <a href="#what-s-the-llama-serving-story">What's the LLaMA Serving Story?</a> </div> <div> <a href="#"></a> </div> <ul> <li> <a href="#thinking-about-throughput">Thinking about throughput</a> </li> <li> <a href="#what-about-prefill">What about prefill?</a> </li> </ul> <div> <a href="#visualizing-the-latency-throughput-tradeoff">Visualizing the Latency Throughput Tradeoff</a> </div> <div> <a href="#worked-problems">Worked Problems</a> </div> </nav> </d-contents> <p class="takeaway"> <b>번역 안내:</b> 원저자(<a href="https://www.jacobaustin.org/" rel="external nofollow noopener" target="_blank">Jacob Austin</a>)의 허락을 받아 원문을 번역 중입니다.<br> 해당 글의 1인칭은 원문 저자를 지칭합니다.<br> 원문: <a href="https://jax-ml.github.io/scaling-book/" rel="external nofollow noopener" target="_blank">How to Scale Your Model</a><br> 번역: <a href="https://www.linkedin.com/in/michael-shin-3522a6189/" rel="external nofollow noopener" target="_blank">신종훈</a></p> <p><em>이 섹션에서는 LLaMA-3를 서빙하는 데 필요한 것과 얼마나 효율적으로 수행할 수 있는지 살펴볼 것입니다. 이전의 “applied” 섹션과 마찬가지로, 정답을 찾아보기 전에 펜과 종이를 가지고 스스로 답을 찾아보세요!</em></p> <h2 id="whats-the-llama-serving-story">What’s the LLaMA Serving Story?</h2> <p>LLaMA 3-70B가 어떻게 생겼는지 상기해 봅시다 (<a href="../applied-training">섹션 6</a> 참조):</p> <table> <thead> <tr> <th><strong>hyperparam</strong></th> <th style="text-align: center"><strong>value</strong></th> </tr> </thead> <tbody> <tr> <td>\(n_\text{layers}\) (L)</td> <td style="text-align: center">80</td> </tr> <tr> <td>\(d_\text{model}\) (D)</td> <td style="text-align: center">8,192</td> </tr> <tr> <td>\(d_{ff}\) (F)</td> <td style="text-align: center">28,672</td> </tr> <tr> <td>\(n_\text{heads}\) (N)</td> <td style="text-align: center">64</td> </tr> <tr> <td>\(n_\text{kv heads}\) (K)</td> <td style="text-align: center">8</td> </tr> <tr> <td>\(d_\text{qkv}\) (H)</td> <td style="text-align: center">128</td> </tr> <tr> <td>\(n_\text{embeddings}\) (V)</td> <td style="text-align: center">128,256</td> </tr> </tbody> </table> <p>간단한 질문으로 시작해 봅시다: <strong>어떤 하드웨어에서 서빙해야 할까요?</strong> 정답은 기본적으로 FLOPs / dollar가 가장 저렴한 것입니다.<d-footnote>항상 그런 것은 아니며, 때로는 FLOPs보다 더 많은 HBM이나 ICI 대역폭이 중요할 수 있지만, 이는 좋은 휴리스틱입니다.</d-footnote> 이러한 이유로, 우리는 일반적으로 현재 전용 추론 칩인 TPU v5e에서 서빙하기를 원합니다 (비용은 2025년 2월 기준 <a href="https://cloud.google.com/tpu/pricing" rel="external nofollow noopener" target="_blank">Google Cloud 가격 책정</a>에서 가져옴):</p> <table> <thead> <tr> <th><strong>TPU type</strong></th> <th style="text-align: center"><strong>bfloat16 FLOPs/s</strong></th> <th style="text-align: center"><strong>Google Cloud USD / hour</strong></th> <th style="text-align: center"><strong>FLOPs / $</strong></th> </tr> </thead> <tbody> <tr> <td>H100</td> <td style="text-align: center">9.9e14</td> <td style="text-align: center">$10.8</td> <td style="text-align: center">3.3e17</td> </tr> <tr> <td>v5p</td> <td style="text-align: center">4.59e14</td> <td style="text-align: center">$4.2</td> <td style="text-align: center">3.9e17</td> </tr> <tr> <td>v5e</td> <td style="text-align: center">1.97e14</td> <td style="text-align: center">$1.2</td> <td style="text-align: center"><strong>5.8e17</strong></td> </tr> </tbody> </table> <p>각 TPU v5e는 16GB의 HBM을 가지고 있어 모델을 상당히 공격적으로 샤딩해야 합니다. 우리에게 중요할 수 있는 몇 가지 기본 수량을 생각하는 것부터 시작해 봅시다:</p> <p><strong>Question:</strong> LLaMA 3-70B의 토큰당 KV 캐시는 얼마나 큰가요? <em>int8로 저장한다고 가정할 수 있습니다. 이는 주어진 토폴로지에서 배치 크기가 얼마나 클 수 있는지를 결정합니다.</em></p> <details><summary>다 생각해 보셨다면 여기를 클릭하세요!</summary> <p>LLaMA 3-70B는 8개의 KV 헤드를 가지고 있으므로 토큰당 크기는 <code class="language-plaintext highlighter-rouge">2 * K * H * L = 2 * 8 * 128 * 80 = 160kB</code>입니다.</p> <p><strong>이것이 얼마나 큰지 주목하세요!</strong> 시퀀스 길이가 32k 토큰인 경우(일반적임) <code class="language-plaintext highlighter-rouge">162e3 * 32,768 = 5.3GB / sequence</code>를 사용합니다. BS=240의 경우 이는 1.3TB입니다! TPU v5e는 각각 16GB만 가지고 있으므로 이만큼의 메모리를 맞추려면 약 <code class="language-plaintext highlighter-rouge">(70e9 + 1.3e12) / 16e9 = 86</code>개의 TPU v5e 칩이 필요합니다. 또한 이것이 70GB의 모델 파라미터에 비해 얼마나 큰지 주목하세요.</p> </details> <p><strong>Question:</strong> L3 70B를 배치 크기 32, 시퀀스 길이 8192, 모든 것(파라미터 및 KV)을 int8로 서빙하고 싶다고 가정해 봅시다. 총 메모리는 얼마나 사용될까요? 이것을 서빙할 수 있는 가장 작은 슬라이스는 무엇인가요?</p> <details><summary>Answer</summary> <p>KV는 int8에서 <code class="language-plaintext highlighter-rouge">160e3</code> 바이트이므로 총 KV 메모리는 <code class="language-plaintext highlighter-rouge">160e3 * 8192 * 32 = 41.9e9</code> 바이트입니다. 파라미터당 1바이트이므로 파라미터는 <code class="language-plaintext highlighter-rouge">70e9</code> 바이트입니다. 따라서 총 메모리 사용량은 <code class="language-plaintext highlighter-rouge">41.9e9 + 70e9 = 112GB</code>입니다.</p> <p>사용할 수 있는 가장 작은 슬라이스는 <code class="language-plaintext highlighter-rouge">112e9 / 16e9 = 7</code>개의 TPU, 즉 (짝수 크기로 반올림하여) TPU v5e <code class="language-plaintext highlighter-rouge">4x2</code>가 될 것입니다. 이것은 빡빡할 수 있으며 다른 오버헤드를 고려할 때 딱 맞지 않을 수도 있으므로 최소한 <code class="language-plaintext highlighter-rouge">4x4</code>가 필요할 수 있습니다(또는 배치 크기를 줄여야 함).</p> </details> <p><strong>Question:</strong> TPU v5e <code class="language-plaintext highlighter-rouge">4x2</code>에서 이 배치 크기와 양자화로, 디코드 단계당 대략 어떤 지연 시간을 예상할 수 있나요? 처리량(tokens / sec / chip)은 어떤가요? <code class="language-plaintext highlighter-rouge">4x4</code>는 어떨까요? <em>FLOPs는 bfloat16에서 수행되고 모든 것이 완전히 샤딩되었다고 가정합니다.</em></p> <details><summary>Answer</summary> <p>이전 섹션의 공식을 호출할 수 있습니다.</p> \[\begin{align*} \tiny \text{Theoretical Step Time (General)} = \underbrace{\frac{\text{Batch Size} \times \text{KV Cache Size}}{\tiny \text{Total Memory Bandwidth}}}_{\text{Attention (always bandwidth-bound)}} + \underbrace{\max\left(\frac{2 \times \text{Batch Size} \times \text{Parameter Count}}{\text{Total FLOPs/s}}, \frac{\text{Parameter Size}}{\text{Total Memory Bandwidth}}\right)}_{\tiny \text{MLP (can be compute-bound)}} \end{align*}\] <p>여기서 파라미터는 int8이지만 FLOPs는 bfloat16이므로 임계 배치 크기는 약 120이 될 것입니다. RHS 최대값을 수동으로 계산할 수도 있지만, 이는 기본적으로 우리가 이미 여러 번 수행한 계산입니다. <strong>따라서 우리는 matmul과 FLOPs 모두에 대해 memory-bound 영역에 잘 들어와 있습니다.</strong></p> <p>엄밀히 메모리 대역폭만 보면, 단계 시간은 기본적으로 <code class="language-plaintext highlighter-rouge">(KV size + param size) / (8 * HBM bandwidth) = 112e9 / (8 * 8.1e11) = 17ms</code>입니다. <strong>따라서 이론적으로 단계 시간은 약 17ms입니다.</strong> 처리량은 <code class="language-plaintext highlighter-rouge">32 / .017 = 1882 tokens / sec</code> 또는 <code class="language-plaintext highlighter-rouge">1882 / 8 = 235 tokens / sec / chip</code>입니다.</p> <p>여기서 한 가지 주의할 점은 matmul에서 ICI bound가 될 수 있는지 확인하는 것입니다. 여기서 2개의 축을 할당할 수 있으므로 이론적으로 $Y &gt; 2 * F / 2200 = 2 * 28672 / 2200 = 26$일 때 ICI bound인데, 우리는 괜찮습니다!</p> <p><code class="language-plaintext highlighter-rouge">4x4</code>에서 실행하더라도 ICI 측면에서 여전히 괜찮으므로 지연 시간은 <code class="language-plaintext highlighter-rouge">17 / 2 = 8.5ms</code>로 떨어지지만 칩당 처리량은 동일하게 유지됩니다.</p> </details> <h3 id="thinking-about-throughput">Thinking about throughput</h3> <p>처리량에 대해서만 생각하는 시간을 가져봅시다. 처리량을 최적화할 때 우리는 compute bound가 되기를 원합니다. 즉, 모든 TPU MXU 용량을 활용하는 데 가까워지는 것입니다. 일반적으로 이는 배치 크기를 가능한 한 크게 하여 가능한 한 많은 작업을 수행하고자 함을 의미합니다.</p> <p><strong>Question:</strong> TPU v5e에서 bfloat16 가중치와 활성화를 사용할 때, matmul에서 compute-bound가 되려면 배치 크기가 얼마나 커야 하나요? int8 가중치를 사용하지만 FLOPs는 bfloat16으로 수행하면 어떨까요? int8 가중치와 int8 FLOPs는 어떨까요?</p> <details><summary>Answer</summary> <p>섹션 7에서 논의했듯이, $B \ll D, F$인 bfloat16 matmul의 경우 다음이 성립합니다.</p> \[\begin{equation*} T_\text{math} &gt; T_\text{comms} \leftrightarrow \frac{2BDF}{2DF} \geq \frac{\text{TPU bfloat16 FLOPs/s}}{\text{HBM bandwidth}} = 240 \end{equation*}\] <p>가중치가 int8일 때 분모에서 2배를 잃게 되므로 $2BDF / DF = 2B &gt; 240$, 또는 동일하게 $B &gt; 120$이 되며, 이는 이전 임계 배치 크기의 절반입니다. 이것은 우리에게 정말 도움이 됩니다! int8 가중치와 int8 FLOPs를 수행할 때 TPU FLOPs/s에 대해 int8 값을 사용해야 하는데, 이는 bfloat16의 1.97e14에서 거의 두 배인 3.94e14로 증가합니다. 즉, 우리는 다시 약 $B &gt; 240$으로 돌아갑니다.</p> <p>int8 가중치와 bfloat16 FLOPs의 경우는 꽤 흔합니다. 파라미터를 손실 없이 양자화하는 것이 저정밀도 산술을 수행하는 것보다 종종 더 쉽기 때문입니다.</p> </details> <p><strong>Question:</strong> 8k 컨텍스트로 bfloat16, int8, int4(KV 및 파라미터 모두)를 사용하여 LLaMA 3-70B를 서빙할 수 있는 가장 작은 TPU v5e 토폴로지는 무엇인가요? <em>이 문제에서 KV 캐시는 무시할 수 있을 만큼 작다고 생각할 수 있습니다.</em></p> <details><summary>Answer</summary> <p>쉽습니다! 아주 작은 배치 크기에 괜찮다면 유일한 제한은 HBM에 파라미터 메모리를 맞추는 것입니다. 즉, <code class="language-plaintext highlighter-rouge">ceil(num_params * sizeof(dtype) / HBM per TPU</code>, 또는 <code class="language-plaintext highlighter-rouge">ceil(70e9 * sizeof(dtype) / 16e9)</code>를 가장 가까운 합리적인 토폴로지(2의 배수)로 반올림한 것입니다:</p> <table> <thead> <tr> <th style="text-align: center">dtype</th> <th style="text-align: center">param size</th> <th style="text-align: center">KV size / token (bytes)</th> <th style="text-align: center">min TPU v5es</th> <th style="text-align: center">actual min slice</th> <th style="text-align: center">remaining HBM for KV caches</th> <th style="text-align: center">num KV caches @ 8k</th> </tr> </thead> <tbody> <tr> <td style="text-align: center">bf16</td> <td style="text-align: center">140GB</td> <td style="text-align: center">324kB</td> <td style="text-align: center">8.75</td> <td style="text-align: center">4x4 = 16 chips</td> <td style="text-align: center">116</td> <td style="text-align: center">43</td> </tr> <tr> <td style="text-align: center">int8</td> <td style="text-align: center">70GB</td> <td style="text-align: center">162kB</td> <td style="text-align: center">4.38</td> <td style="text-align: center">4x2 = 8 chips</td> <td style="text-align: center">58</td> <td style="text-align: center">43</td> </tr> <tr> <td style="text-align: center">int4</td> <td style="text-align: center">35GB</td> <td style="text-align: center">81kB</td> <td style="text-align: center">2.81</td> <td style="text-align: center">2x2 = 4 chips</td> <td style="text-align: center">29</td> <td style="text-align: center">43</td> </tr> <tr> <td style="text-align: center">int8</td> <td style="text-align: center">70GB</td> <td style="text-align: center">162kB</td> <td style="text-align: center">4.38</td> <td style="text-align: center">4x2 = 8 chips</td> <td style="text-align: center">58</td> <td style="text-align: center">43</td> </tr> <tr> <td style="text-align: center">int4</td> <td style="text-align: center">35GB</td> <td style="text-align: center">81kB</td> <td style="text-align: center">2.81</td> <td style="text-align: center">2x2 = 4 chips</td> <td style="text-align: center">29</td> <td style="text-align: center">43</td> </tr> </tbody> </table> <p>정말 멋집니다! 원한다면 LLaMA 70B를 TPU v5e 2x2에 맞출 수 있다는 것을 말해줍니다. 단, KV 캐시의 수가 매우 적다는 것을 알 수 있습니다. 그것이 바로 우리의 배치 크기입니다! 즉, 우리는 끔찍한 FLOPs 활용률을 얻게 될 것입니다. 배치 크기를 240까지 올리기 위해 더 큰 토폴로지를 사용하는 것이 훨씬 더 기쁠 것입니다.</p> </details> <p><strong>Question:</strong> 이 토폴로지들에 맞는 가장 큰 배치 크기를 사용한다고 가정할 때, 각 generate 단계에 대해 어떤 지연 시간을 예상할 수 있을까요?</p> <details><summary>Answer</summary> <p>HBM을 가득 채울 배치 크기를 선택하고 있기 때문에 이것 또한 쉽습니다! 이것은 단지 전체 TPU v5e 분량의 바이트를 MXU로 로드하는 데 얼마나 걸리는지의 문제입니다. 이것은 단지 <code class="language-plaintext highlighter-rouge">v5e HBM / v5e HBM memory bandwidth = 16GB / 8.2e11 = 19ms</code>이므로 <strong>19ms / step</strong>입니다. 생성의 중앙값 길이가 512 토큰이라고 가정하면 각 디코딩에 약 9초가 걸립니다. 더 작은 배치 크기로 약간 더 나은 지연 시간을 얻을 수 있습니다. 예를 들어 int4의 모델 파라미터만 본다면 HBM이 더 이상 꽉 차 있지 않으므로 최소 지연 시간은 약 10ms / step입니다.</p> </details> <p class="takeaway"><strong>Takeaway</strong>: HBM에서 MXU로 모든 모델 파라미터를 로드하는 데 걸리는 시간을 물어봄으로써 항상 디코드 지연 시간의 하한을 정할 수 있습니다. KV 캐시가 작을 때, 각 레이어를 가중치를 청크 단위로 로드하고 폐기하는 것으로 생각할 수 있습니다. 큰 배치 크기나 많은 기기 간 통신을 사용하지 않는 한, 이는 종종 합리적인 경계입니다(1.5배 이내). 배치 크기가 클 때는 KV 캐시 로딩이 파라미터를 지배하므로 KV 캐시 로딩도 모델링해야 합니다.</p> <p>마찬가지로 FLOPs-bound 영역(예: 훈련 또는 대규모 배치 추론)에서는 통신이 없다고 가정하는 \(\text{Total FLOPs} / (N \cdot C) = 2 \cdot \text{param count} \cdot B / (N \cdot C)\) 하한을 사용할 수 있습니다.</p> <p><strong>Question:</strong> 이들 각각에 대해, 이것이 우리에게 주는 칩당 처리량은 얼마인가요(queries / chip 측면에서)? <em>중앙값 디코드 길이는 512 토큰이라고 가정할 수 있습니다.</em></p> <details><summary>Answer</summary> <p>이것은 중요한 질문입니다. 비용 / 토큰과 정확히 상관관계가 있기 때문입니다.</p> <p>중앙값 디코드 길이에 대한 가정하에 처리량은 단지 \(B / (\text{per-step latency} \cdot \text{median steps} \cdot N) \approxeq 43 / (0.019 * 512 * N)\)입니다. 이는 대략 \((4.42 / N)\)QPS를 제공하므로\(N\)을 대입하면 다음과 같습니다:</p> <table> <thead> <tr> <th style="text-align: center">dtype</th> <th style="text-align: center">QPS / chip</th> </tr> </thead> <tbody> <tr> <td style="text-align: center">bfloat16</td> <td style="text-align: center">0.27</td> </tr> <tr> <td style="text-align: center">int8</td> <td style="text-align: center">0.55</td> </tr> <tr> <td style="text-align: center">int4</td> <td style="text-align: center">1.11</td> </tr> <tr> <td style="text-align: center">int8</td> <td style="text-align: center">0.55</td> </tr> <tr> <td style="text-align: center">int4</td> <td style="text-align: center">1.11</td> </tr> </tbody> </table> <p>이것은 순방향 패스의 작업 메모리(활성화 및 어텐션에 할당된 메모리)를 완전히 무시하므로 다소 낙관적입니다. Flash Attention을 사용하면 터무니없지는 않지만 현실적이지도 않습니다. 실제 숫자는 아마도 이것의 1/2 정도일 것입니다. 절대적인 최대 처리량을 위해서는 아마도 칩 수를 두 배 이상 늘리고 배치 크기도 크게 늘리고 싶을 것입니다.</p> </details> <p><strong>Question:</strong> 위의 각 예에 대해 토폴로지를 두 배로 늘리면 피크 처리량은 어떻게 변할까요?</p> <details><summary>Answer</summary> <p>bfloat16에서 4x8 슬라이스를 사용하면 KV 캐시를 위해 372GB가 남게 되며, 이를 통해 배치 크기를 140까지 늘릴 수 있습니다. 그러면 단계 시간은 동일하게 유지되므로 <code class="language-plaintext highlighter-rouge">14.39 / num_chips</code>의 처리량을 갖게 되며, 이는 다음과 같습니다.</p> <table> <thead> <tr> <th style="text-align: center">dtype</th> <th style="text-align: center">QPS / chip</th> </tr> </thead> <tbody> <tr> <td style="text-align: center">bfloat16 (on 4x8)</td> <td style="text-align: center">0.44</td> </tr> <tr> <td style="text-align: center">int8 (on 4x4)</td> <td style="text-align: center">0.90</td> </tr> <tr> <td style="text-align: center">int4 (on 2x4)</td> <td style="text-align: center">1.80</td> </tr> </tbody> </table> <p>더 늘리면 더 큰 승리를 얻을 수 있습니다! 큰 결론은 KV 캐시 크기에 의해 제한되는 경우 <strong>가장 작은 토폴로지가 모든 경우에 가장 성능이 좋은 토폴로지는 아니라는 것</strong>입니다.</p> </details> <p><strong>Question:</strong> 이제 샤딩 문제에 대해 파고들어 봅시다. TPU v5e 4x8에서 bfloat16으로 서빙하고 싶다고 가정해 봅시다. generation 중 TPU v5e 4x8에서 모델에 어떤 샤딩을 사용하시겠습니까? comms bound가 되는 것을 피할 수 있을까요?</p> <details><summary>Answer</summary> <p>이전 섹션에서 논의했듯이 generation 중에는 실제로 샤딩을 위한 하나의 옵션만 있습니다: 모델 병렬 처리. comms bound가 되기 전까지 얼마나 많이 할 수 있을까요? 이전 섹션에서 논의했듯이 모델은 대략 다음과 같을 때 comms bound가 됩니다.</p> <p>\(Y &gt; \frac{F \cdot M_Y}{2200}\) \(Y &gt; \frac{F \cdot M_Y}{2200}\)</p> <p>LLaMA 3-70B의 경우 <code class="language-plaintext highlighter-rouge">F = 28,672</code>이므로, 2축의 모델 샤딩을 수행하면 대략 \(Y = 28672 \cdot 2 / 2200 = 26\)을 얻으므로 일반적으로 comms bound 없이 약 16개의 칩까지 확장할 수 있으며, 이는 <code class="language-plaintext highlighter-rouge">4x4</code>를 사용할 수 있게 해주지만 <code class="language-plaintext highlighter-rouge">4x8</code>은 아닙니다. 일반적으로 계산을 완벽하게 중첩하지 않으므로 이 추정치조차 지나치게 낙관적입니다.</p> <p><strong>Takeaway: 순수 모델 병렬 처리로는 4x8에서 실제로 서빙할 수 없습니다.</strong> 여기서 할 수 있는 최선은 4x2 또는 <em>아마도</em> 4x4입니다.</p> <p>그러나 논의했듯이 배치 크기가 작을 때 모델은 FLOPs bound가 아니라 memory-bandwidth-bound이므로 처리량에 큰 해를 끼치지 않고 종종 더 많은 모델 병렬 처리를 수행할 수 있습니다. 우리는 이전에 이 값이 대략 $Y=F / (8\cdot B)$라고 말했으므로, 배치 크기 64를 수행하면 이론적으로 ICI-bound가 되기 전에 최대 <code class="language-plaintext highlighter-rouge">Y = 28,672 / (8 * 64) = 56</code>방향 모델 병렬 처리까지 갈 수 있습니다. 이를 확인하기 위해 단일 matmul에 대해 $T_\text{ici comms}$, $T_\text{hbm comms}$, $T_\text{math}$를 살펴볼 수 있습니다. 분명히 다음을 얻습니다:</p> \[\begin{align*}T_\text{ici comms} = \frac{2BD}{W_\text{ici}} &amp;&amp; T_\text{hbm comms} = \frac{2DF}{Y \cdot W_\text{hbm}} &amp;&amp; T_\text{math} = \frac{2BDF}{Y \cdot C}\end{align*}\] <p><code class="language-plaintext highlighter-rouge">4x8</code>의 경우 $T_\text{ici comms}$ = <code class="language-plaintext highlighter-rouge">(2 * 64 * 8192) / 9e10 = 11us</code>, $T_\text{hbm comms}$ = <code class="language-plaintext highlighter-rouge">(2 * 8192 * 28,672) / (32 * 8.1e11) = 18us</code>, $T_\text{math}$ = <code class="language-plaintext highlighter-rouge">(2 * 64 * 8192 * 28,672) / (32 * 1.97e14) = 4us</code>가 되므로 이론적으로 우리는 여전히 HBM 대역폭 제한 상태이며, 이는 훌륭합니다! *참고로 <code class="language-plaintext highlighter-rouge">4x4</code>에서 <code class="language-plaintext highlighter-rouge">4x8</code>로 확장하는 것은 처리량 관점에서는 도움이 되지 않을 수 있지만 지연 시간은 줄어들 것입니다!</p> <p>int8 및 int4 구성을 보면 순수 모델 병렬 처리로 <em>수행할 수 있습니다</em>. 따라서 우리는 양자화가 실제로 더 빠른 FLOPs 이상의 의미 있는 이점을 제공하는 지점에 도달했습니다: comms-bound가 되기 전에 더 큰 배치 크기를 사용할 수 있게 해줍니다. <strong>따라서 이 이야기의 결론은 4x8에서 최대 처리량을 달성할 수는 없지만 int8 및 int4 구성의 경우 순수 모델 병렬 처리를 수행할 수 있다는 것입니다</strong>.</p> </details> <p class="takeaway"><strong>Tip</strong>: 유용한 모델 병렬 처리의 최대량은 \(d_{ff}\)와 모델을 샤딩하는 축의 수에 따라 다릅니다. 최대값은 일반적으로 모델 크기에 따라 8에서 32 사이입니다. 이 한계를 넘어서 확장하여 약간의 처리량 비용으로 지연 시간을 개선할 수 있습니다.</p> <h3 id="what-about-prefill">What about prefill?</h3> <p>prefill은 훨씬 간단하기 때문에 여기서 대부분 무시했습니다. 몇 가지 개념을 합쳐서 엔드투엔드 그림을 생각해 봅시다.</p> <p><strong>Question:</strong> prefill 중 40% FLOPs 활용률을 달성한다고 가정해 봅시다. 16개의 TPU v5e 칩에서 길이 8192의 prefill은 얼마나 걸릴까요?</p> <details><summary>Answer</summary> <p>8k 토큰에서 우리는 확실히 compute bound이므로 FLOPs에 대해서만 생각하면 됩니다. 모델이 <code class="language-plaintext highlighter-rouge">70e9</code> 파라미터를 가지고 있으므로 각 순방향 패스는 <code class="language-plaintext highlighter-rouge">2 * 70e9 * B</code> FLOPs를 사용한다는 것을 알고 있습니다. 40% MFU(FLOPs 활용률)를 가정하면, 이는 약 <code class="language-plaintext highlighter-rouge">2 * 70e9 * 8192 / (16 * 1.97e14 * 0.4) = 0.91s</code>의 실행 시간을 제공합니다. 이전에 살펴보았던 숫자들과 비교하면 실제로는 꽤 깁니다!</p> </details> <p><strong>Question:</strong> 중앙값 prefill 길이가 8192 토큰이고 중앙값 decode 길이가 4096 토큰이라고 가정해 봅시다. generate 배치 크기가 32라고 가정합니다. 평균적으로 단계당 얼마나 많은 시퀀스가 디코딩을 완료합니까? 평균적으로 매 단계마다 얼마나 많은 토큰이 KV 캐시에서 퇴출됩니까?</p> <details><summary>Answer</summary> <p>이것은 일종의 간단한 문제입니다. 중앙값 decode 길이가 4096 토큰이므로 시퀀스는 대략 1 / 4096 토큰마다 완료됩니다. 배치 크기가 32인 경우 단계당 <code class="language-plaintext highlighter-rouge">32 / 4096</code>개의 시퀀스가 퇴출됩니다. KV 캐시 길이는 대략 <code class="language-plaintext highlighter-rouge">8192 + 4096</code>이므로, 이는 단계당 <code class="language-plaintext highlighter-rouge">32 * (8192 + 4096) / 4096 = 96</code>개의 토큰이 퇴출됨을 의미합니다. 일반 공식은 $B * (P + G) / G$이며 여기서 $P$와 $G$는 prefill 및 generate 길이입니다.</p> </details> <p><strong>Question:</strong> 중앙값 prefill 길이가 8192이고 중앙값 decode 길이가 512인 분산형 서빙을 수행한다고 가정해 봅시다. bfloat16에서 위에서 계산된 prefill 및 generate 지연 시간을 가정합니다. 둘 다 완전히 포화 상태로 유지하려면 prefill:generate 서버의 비율이 어떻게 되어야 할까요?</p> <details><summary>Answer</summary> <p>이것은 꽤 재미있는 질문입니다. $P$를 prefill 서버 수, $G$를 generate 서버 수라고 합시다. 따라서 일반적으로 말해서, 이것은 시퀀스를 <code class="language-plaintext highlighter-rouge">P / prefill_latency</code> 속도로 공급하고 <code class="language-plaintext highlighter-rouge">B * G / (generate_latency * median_decode_length)</code> 속도로 소비하는 파이프라인 문제입니다. 배치 크기 43(32라고 부릅시다)에서 prefill 단계당 <code class="language-plaintext highlighter-rouge">910ms</code> 및 decode 단계당 <code class="language-plaintext highlighter-rouge">19ms</code>를 계산했습니다. 따라서 <code class="language-plaintext highlighter-rouge">P / 0.91 = 32 * G / (0.019 * 512)</code> 또는 <code class="language-plaintext highlighter-rouge">P = 3G</code>, 즉 생성 서버보다 약 3배 더 많은 prefill 서버가 필요합니다!</p> </details> <h2 id="visualizing-the-latency-throughput-tradeoff">Visualizing the Latency Throughput Tradeoff</h2> <p>잠시 LLaMA 70B를 고수하며 generation 중 다양한 배치 크기에 대한 지연 시간과 처리량을 실제로 살펴보겠습니다. 이전 섹션에서 PaLM 모델에 대해 보여주었듯이 이것은 처리량/지연 시간에 대한 파레토 프런티어를 제공합니다. MLP 블록에서 compute-bound를 유지하면서 사용할 수 있는 합리적인 한계이므로 16방향 텐서 병렬 처리를 가정해 보겠습니다. 여기서는 TPU v5e 4x4 토폴로지를 사용합니다. <strong>슬라이더는 시퀀스 길이를 제어하므로 더 큰 KV 캐시의 효과를 볼 수 있습니다.</strong></p> <div class="l-page"> <iframe src="/scaling-book/assets/plotly/pareto.html" frameborder="0" scrolling="no" height="400px" width="100%"></iframe> </div> <ul> <li> <strong>비용과 지연 시간 간의 트레이드오프가 얼마나 극적인지 확인하세요.</strong> 토큰당 지연 시간을 두 배로 늘리는 비용으로 토큰당 비용을 대략 100배 줄일 수 있습니다. 또한 지연 시간은 낮은 배치 크기에서 5.5ms부터 매우 큰 배치에서 20ms까지 다양할 수 있습니다.</li> <li>2k 컨텍스트에서 처리량이 BS 120 루프라인(int8 가중치이지만 bf16 FLOPs를 수행하므로 여기서는 120)에 도달할 때 약 1 token / ms / chip에서 어떻게 효과적으로 정체되는지 주목하세요. 그러나 시퀀스 길이가 증가함에 따라 이 배치 크기를 메모리에 맞출 수 없으므로 완전 포화 지점에 도달하지 못합니다.</li> <li>동일한 처리량에 대해 큰 배치 크기에서 지연 시간이 얼마나 더 높은지 주목하세요. KV 로딩이 (파라미터 로딩 대신) 지배적이 되기 때문입니다.</li> </ul> <p>비용과 지연 시간의 원인을 파라미터 로딩 시간, KV 로딩 시간, FLOPs 시간으로 나누어 더 잘 이해할 수 있습니다. 빨간색 섹터는 MLP 블록에서 compute-bound가 될 것으로 예상되는 영역입니다.</p> <div class="l-page"> <iframe src="/scaling-book/assets/plotly/latency_breakdown_log.html" frameborder="0" scrolling="no" height="400px" width="100%"></iframe> </div> <p>이것은 꽤 많은 이야기를 해줍니다. 처음에 파라미터 로딩이 지연 시간의 대부분을 차지하다가 배치 크기가 충분히 커지면 FLOPs와 KV 로딩이 더 중요해지는 것을 볼 수 있습니다. 특히 2048보다 큰 모든 시퀀스 길이에서 FLOPs보다 KV 캐시 로딩에 더 많은 시간을 소비합니다! <strong>따라서 배치 크기를 늘려 하드웨어 활용률을 개선할 수 있지만, 긴 컨텍스트 길이에서는 KV 로딩이 항상 총 단계 시간을 지배합니다.</strong></p> <p class="takeaway"><strong>Takeaway:</strong> LLaMA 3-70B의 경우 거의 모든 구성에서 강력하게 KV 캐시 메모리 대역폭 제한(및 HBM 제한) 상태이며, 이는 generation 처리량을 위해 KV 캐시 크기를 줄이는 것이 얼마나 중요한지 강조합니다. 또한 여기서 지연 시간/처리량 트레이드오프가 얼마나 극적인지 주목하세요.</p> <details><summary>코드는 꽤 간단합니다.</summary> <p>다음은 이러한 루프라인을 계산하는 코드입니다:</p> <div class="language-py highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kn">import</span> <span class="n">numpy</span> <span class="k">as</span> <span class="n">np</span>
+
+<span class="n">num_chips</span> <span class="o">=</span> <span class="mi">16</span>  <span class="c1"># we fix 16 as the amount of total model parallelism we do
+</span><span class="n">param_size</span> <span class="o">=</span> <span class="mf">70e9</span>  <span class="c1"># int8 means 1 byte per param
+</span><span class="n">sequence_length</span> <span class="o">=</span> <span class="mi">8192</span>  <span class="c1"># can vary this
+</span>
+<span class="n">hbm_bandwidth</span> <span class="o">=</span> <span class="mf">8.20E+11</span>  <span class="c1"># v5e
+</span><span class="n">flops</span> <span class="o">=</span> <span class="mf">1.97E+14</span>  <span class="c1"># v5e
+</span>
+<span class="n">param_size</span> <span class="o">=</span> <span class="n">bytes_per_param</span> <span class="o">*</span> <span class="n">param_count</span>
+
+<span class="k">def</span> <span class="nf">kv_cache_size</span><span class="p">(</span><span class="n">bs</span><span class="p">):</span>
+    <span class="k">return</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">bs</span> <span class="o">*</span> <span class="mi">128</span> <span class="o">*</span> <span class="mi">8</span> <span class="o">*</span> <span class="mi">80</span>
+
+
+<span class="k">def</span> <span class="nf">min_topology</span><span class="p">(</span><span class="nb">bytes</span><span class="p">):</span>
+    <span class="k">return</span> <span class="mi">2</span> <span class="o">**</span> <span class="n">np</span><span class="p">.</span><span class="nf">ceil</span><span class="p">(</span><span class="n">np</span><span class="p">.</span><span class="nf">log2</span><span class="p">(</span><span class="nb">bytes</span> <span class="o">/</span> <span class="mf">16e9</span><span class="p">))</span>
+
+<span class="k">def</span> <span class="nf">get_max_batch_size</span><span class="p">(</span><span class="n">max_num_chips</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span><span class="p">):</span>
+  <span class="c1"># for num_chips in topo_sizes:
+</span>  <span class="n">batch_sizes</span> <span class="o">=</span> <span class="n">np</span><span class="p">.</span><span class="nf">arange</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1024</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span>
+  <span class="n">kv_sizes</span> <span class="o">=</span> <span class="nf">kv_cache_size</span><span class="p">(</span><span class="n">sequence_length</span> <span class="o">*</span> <span class="n">batch_sizes</span><span class="p">)</span>
+  <span class="n">num_chips</span> <span class="o">=</span> <span class="nf">min_topology</span><span class="p">(</span><span class="n">kv_sizes</span> <span class="o">+</span> <span class="n">param_size</span><span class="p">)</span>
+  <span class="n">max_idx</span> <span class="o">=</span> <span class="n">np</span><span class="p">.</span><span class="nf">where</span><span class="p">(</span><span class="n">num_chips</span> <span class="o">&lt;=</span> <span class="n">max_num_chips</span><span class="p">)[</span><span class="mi">0</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+  <span class="k">return</span> <span class="n">max_idx</span>
+
+<span class="n">max_idx</span> <span class="o">=</span> <span class="nf">get_max_batch_size</span><span class="p">(</span><span class="n">num_chips</span><span class="p">,</span> <span class="n">sequence_length</span><span class="p">,</span> <span class="n">param_size</span><span class="p">)</span>  <span class="c1"># get the largest batch size that can fit
+</span><span class="n">batch_sizes</span> <span class="o">=</span> <span class="n">np</span><span class="p">.</span><span class="nf">arange</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">512</span><span class="p">,</span> <span class="mi">1</span><span class="p">)[:</span><span class="n">max_idx</span><span class="p">]</span>
+<span class="n">kv_sizes</span> <span class="o">=</span> <span class="nf">kv_cache_size</span><span class="p">(</span><span class="n">sequence_length</span> <span class="o">*</span> <span class="n">batch_sizes</span><span class="p">)</span>
+
+<span class="n">kv_comms_time</span> <span class="o">=</span> <span class="n">kv_sizes</span> <span class="o">/</span> <span class="p">(</span><span class="n">num_chips</span> <span class="o">*</span> <span class="n">hbm_bandwidth</span><span class="p">)</span>
+
+<span class="n">param_comms_time</span> <span class="o">=</span> <span class="n">param_size</span> <span class="o">/</span> <span class="p">(</span><span class="n">num_chips</span> <span class="o">*</span> <span class="n">hbm_bandwidth</span><span class="p">)</span>
+<span class="n">param_comms_time</span> <span class="o">=</span> <span class="n">np</span><span class="p">.</span><span class="nf">asarray</span><span class="p">([</span><span class="n">param_comms_time</span><span class="p">]</span> <span class="o">*</span> <span class="n">batch_sizes</span><span class="p">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+
+<span class="n">flops_time</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">param_count</span> <span class="o">*</span> <span class="n">batch_sizes</span> <span class="o">/</span> <span class="p">(</span><span class="n">num_chips</span> <span class="o">*</span> <span class="n">flops</span><span class="p">)</span>  <span class="c1"># roughly true in a 2ND sense
+</span>
+<span class="n">mlp_time</span> <span class="o">=</span> <span class="n">np</span><span class="p">.</span><span class="nf">maximum</span><span class="p">(</span><span class="n">flops_time</span><span class="p">,</span> <span class="n">param_comms_time</span><span class="p">)</span>
+<span class="n">attn_time</span> <span class="o">=</span> <span class="n">kv_comms_time</span>  <span class="c1"># always bandwidth-bound for generate
+</span>
+<span class="n">latency</span> <span class="o">=</span> <span class="mi">1000</span> <span class="o">*</span> <span class="p">(</span><span class="n">mlp_time</span> <span class="o">+</span> <span class="n">attn_time</span><span class="p">)</span>
+<span class="n">throughput</span> <span class="o">=</span> <span class="n">batch_sizes</span> <span class="o">/</span> <span class="p">(</span><span class="n">latency</span> <span class="o">*</span> <span class="n">num_chips</span><span class="p">)</span>
+</code></pre></div></div> <p>우리가 지연 시간을 KV 로딩과 파라미터 로딩이라는 두 가지 소스로 매우 명시적으로 나누고, 지연 시간이 FLOPs 또는 comms 중 더 큰 것에 의해 제한되는 방식을 주목하세요.</p> </details> <h2 id="worked-problems">Worked Problems</h2> <p>다음은 몇 가지 풀이 문제입니다. 이 중 일부는 위에서 다룬 내용을 반복하지만 교육적으로 유용할 수 있습니다.</p> <p><strong>Question 1:</strong> LLaMA 3-405B에 대한 각 순방향 패스는 토큰당 몇 FLOPs를 사용하나요? FLOPs bound라고 가정할 때 TPU v5e의 N개 칩에서 단일 순방향 패스의 하한은 얼마인가요? comms bound라면 어떨까요? <em>모델이 단일 칩에 맞지 않는다는 사실은 무시하세요.</em></p> <p><strong>Question 2:</strong> int8 가중치와 int8 KV 캐시를 사용하여 BS240으로 LLaMA 3-8B를 서빙하고 싶다고 가정해 봅시다. (a) 모델 파라미터 (b) KV 캐시 (c) 피크 작업 활성화(대략)에 사용되는 바이트 수는 얼마인가요? 이것을 실행할 수 있는 가장 작은 토폴로지는 무엇인가요?</p> <p><strong>Question 3:</strong> TPU v5e에서 LLaMA 3-405B를 어떻게 서빙하시겠습니까? int8 가중치와 bfloat16 FLOPs를 가정합니다. 15ms / token의 확고한 제한이 있다고 가정할 때 달성할 수 있는 가장 높은 처리량 구성은 무엇인가요? 이론적 최소 단계 시간은 얼마인가요?</p> <h3 class="next-section">섹션 8은 여기까지입니다! XLA 및 TPU 프로파일링에 대해 자세히 알아보는 섹션 9를 보려면 <a href="../profiling">여기</a>를 클릭하세요.</h3> </d-article> <d-appendix> <d-footnote-list></d-footnote-list> <d-citation-list></d-citation-list> <div class="base-grid appendix-entry"> <h3 style="grid-column: 0;">Miscellaneous</h3> <p class="author-footnote" style="grid-column: text;"><sup>*</sup>Work done at Google DeepMind, now at MatX.</p> </div> <div class="base-grid appendix-entry"> <h3 style="grid-column: 0;">Citation</h3> <p class="author-footnote">For attribution in academic contexts, please cite this work as:</p> <div class="author-footnote"> <div class="language-bibtex highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="c">Austin et al., "How to Scale Your Model", Google DeepMind, online, 2025.</span>
+</code></pre></div></div> </div> <p class="author-footnote">or as a BibTeX entry:</p> <div class="author-footnote"> <div class="language-bibtex highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="nc">@article</span><span class="p">{</span><span class="nl">scaling-book</span><span class="p">,</span>
+      <span class="na">title</span> <span class="p">=</span> <span class="s">{How to Scale Your Model}</span><span class="p">,</span>
+      <span class="na">author</span> <span class="p">=</span> <span class="s">{Austin, Jacob and Douglas, Sholto and Frostig, Roy and Levskaya, Anselm and Chen, Charlie and Vikram, Sharad
+      and Lebron, Federico and Choy, Peter and Ramasesh, Vinay and Webson, Albert and Pope, Reiner}</span><span class="p">,</span>
+      <span class="na">publisher</span> <span class="p">=</span> <span class="s">{Google DeepMind}</span><span class="p">,</span>
+      <span class="na">howpublished</span> <span class="p">=</span> <span class="s">{Online}</span><span class="p">,</span>
+      <span class="na">note</span> <span class="p">=</span> <span class="s">{Retrieved from https://jax-ml.github.io/scaling-book/}</span><span class="p">,</span>
+      <span class="na">year</span> <span class="p">=</span> <span class="s">{2025}</span>
+    <span class="p">}</span>
+</code></pre></div></div> </div> </div> </d-appendix> <d-bibliography src="/scaling-book/assets/bibliography/"></d-bibliography> <div id="giscus_thread" style="max-width: 930px; margin: 0 auto;"> <script>
+      let giscusTheme = determineComputedTheme();
+      let giscusAttributes = {
+        src: 'https://giscus.app/client.js',
+        'data-repo': 'jax-ml/scaling-book',
+        'data-repo-id': '',
+        'data-category': 'General',
+        'data-category-id': '',
+        'data-mapping': 'title',
+        'data-strict': '1',
+        'data-reactions-enabled': '1',
+        'data-emit-metadata': '0',
+        'data-input-position': 'bottom',
+        'data-theme': giscusTheme,
+        'data-loading': '1',
+        'data-lang': 'en',
+        crossorigin: 'anonymous',
+        async: '',
+      };
+
+      let giscusScript = document.createElement('script');
+      Object.entries(giscusAttributes).forEach(([key, value]) => giscusScript.setAttribute(key, value));
+      document.getElementById('giscus_thread').appendChild(giscusScript);
+    </script> <noscript>Please enable JavaScript to view the <a href="http://giscus.app/?ref_noscript" rel="external nofollow noopener" target="_blank">comments powered by giscus.</a> </noscript> </div> </div> <footer class="sticky-bottom mt-5" role="contentinfo"> <div class="container"> © Copyright 2025 . Powered by <a href="https://jekyllrb.com/" target="_blank" rel="external nofollow noopener">Jekyll</a> with <a href="https://github.com/alshedivat/al-folio" rel="external nofollow noopener" target="_blank">al-folio</a> theme. Hosted by <a href="https://pages.github.com/" target="_blank" rel="external nofollow noopener">GitHub Pages</a>. </div> </footer> <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js" integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=" crossorigin="anonymous"></script> <script src="/scaling-book/assets/js/bootstrap.bundle.min.js"></script> <script src="https://cdn.jsdelivr.net/npm/mdbootstrap@4.20.0/js/mdb.min.js" integrity="sha256-NdbiivsvWt7VYCt6hYNT3h/th9vSTL4EDWeGs5SN3DA=" crossorigin="anonymous"></script> <script defer src="https://cdn.jsdelivr.net/npm/medium-zoom@1.1.0/dist/medium-zoom.min.js" integrity="sha256-ZgMyDAIYDYGxbcpJcfUnYwNevG/xi9OHKaR/8GK+jWc=" crossorigin="anonymous"></script> <script defer src="/scaling-book/assets/js/zoom.js?85ddb88934d28b74e78031fd54cf8308"></script> <script src="/scaling-book/assets/js/no_defer.js?2781658a0a2b13ed609542042a859126"></script> <script defer src="/scaling-book/assets/js/common.js?e0514a05c5c95ac1a93a8dfd5249b92e"></script> <script defer src="/scaling-book/assets/js/copy_code.js?12775fdf7f95e901d7119054556e495f" type="text/javascript"></script> <script defer src="/scaling-book/assets/js/jupyter_new_tab.js?d9f17b6adc2311cbabd747f4538bb15f"></script> <script defer type="text/javascript" id="MathJax-script" src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js" integrity="sha256-MASABpB4tYktI2Oitl4t+78w/lyA+D7b/s9GEP0JOGI=" crossorigin="anonymous"></script> <script src="/scaling-book/assets/js/mathjax-setup.js?70d799092f862ad98c7876aa47712e20"></script> <script defer src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6" crossorigin="anonymous"></script> <script defer src="/scaling-book/assets/js/progress-bar.js?2f30e0e6801ea8f5036fa66e1ab0a71a" type="text/javascript"></script> <script src="/scaling-book/assets/js/vanilla-back-to-top.min.js?f40d453793ff4f64e238e420181a1d17"></script> <script>
+    addBackToTop();
+  </script> </body> </html>
