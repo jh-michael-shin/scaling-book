@@ -85,6 +85,13 @@ _styles: >
     margin-bottom: 0px;
   }
 ---
+
+<p markdown=1 class="takeaway">
+<b>번역 안내:</b> 원저자([Jacob Austin](https://www.jacobaustin.org/))의 허락을 받아 원문을 번역 중입니다.<br> 
+해당 글의 1인칭은 원문 저자를 지칭합니다.<br> 
+원문: [How to Scale Your Model](https://jax-ml.github.io/scaling-book/)<br> 
+번역: [신종훈](https://www.linkedin.com/in/michael-shin-3522a6189/)</p>
+
 **이 에세이 시리즈를 읽어주셔서 감사하며 끝까지 함께해주신 것을 축하드립니다.** 결론을 내리기 전에 몇 가지 감사의 말씀을 드립니다:
 
 ## Acknowledgments

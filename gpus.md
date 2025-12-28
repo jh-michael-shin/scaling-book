@@ -91,6 +91,12 @@ _styles: >
   }
 ---
 
+<p markdown=1 class="takeaway">
+<b>번역 안내:</b> 원저자([Jacob Austin](https://www.jacobaustin.org/))의 허락을 받아 원문을 번역 중입니다.<br> 
+해당 글의 1인칭은 원문 저자를 지칭합니다.<br> 
+원문: [How to Scale Your Model](https://jax-ml.github.io/scaling-book/)<br> 
+번역: [신종훈](https://www.linkedin.com/in/michael-shin-3522a6189/)</p>
+
 ## What Is a GPU?
 
 현대 ML GPU(예: H100, B200)는 기본적으로 행렬 곱셈에 특화된 다수의 연산 코어(**Streaming Multiprocessors** 또는 **SMs**라고 함)가 빠른 메모리 스틱(**HBM**이라고 함)에 연결된 형태입니다. 다음은 다이어그램입니다:
