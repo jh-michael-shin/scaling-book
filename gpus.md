@@ -2,7 +2,7 @@
 layout: distill
 title: "How to Think About GPUs"
 # permalink: /main/
-description: "우리는 Google의 TPU를 사랑하지만, GPU도 훌륭합니다. 이 장에서는 각 칩이 어떻게 작동하고, 서로 어떻게 네트워크로 연결되는지, 그리고 이것이 LLM에 어떤 의미를 갖는지, 특히 TPU와 비교하여 깊이 있게 살펴봅니다. NVIDIA, AMD, Intel 등 다양한 GPU 아키텍처가 있지만 여기서는 NVIDIA GPU에 중점을 둘 것입니다. 이 섹션은 <a href='https://jax-ml.github.io/scaling-book/tpus/'>2장</a>과 <a href='https://jax-ml.github.io/scaling-book/training'>5장</a>을 기반으로 하므로 먼저 읽어보시는 것을 권장합니다."
+description: "우리는 Google의 TPU를 사랑하지만, GPU도 훌륭합니다. 이 장에서는 각 칩이 어떻게 작동하고, 서로 어떻게 네트워크로 연결되는지, 그리고 이것이 LLM에 어떤 의미를 갖는지, 특히 TPU와 비교하여 깊이 있게 살펴봅니다. NVIDIA, AMD, Intel 등 다양한 GPU 아키텍처가 있지만 여기서는 NVIDIA GPU에 중점을 둘 것입니다. 이 섹션은 <a href='https://jh-michael-shin.github.io/scaling-book/tpus/'>2장</a>과 <a href='https://jh-michael-shin.github.io/scaling-book/training'>5장</a>을 기반으로 하므로 먼저 읽어보시는 것을 권장합니다."
 date: 2025-08-18
 future: true
 htmlwidgets: true
@@ -304,7 +304,7 @@ Blackwell (B200)에는 8개의 GPU 노드가 있습니다. GB200NVL72는 72개 G
 
 {% enddetails %}
 
-**Question 3 [AllGather cost]**: B 바이트의 배열이 주어지면 (처리량 제한) AllGather는 8xH100 노드에서 얼마나 걸릴까요? `D=4096`, `F=65,536`인 bf16[D<sub>X</sub>, F]에 대해 계산해 보세요. *이 질문에 답하기 전에 TPU collectives [섹션](https://jax-ml.github.io/scaling-book/sharding/)을 읽어볼 가치가 있습니다. 여기서 이것을 생각해 보겠지만 다음에는 collectives에 대해 훨씬 더 많이 이야기할 것입니다.*
+**Question 3 [AllGather cost]**: B 바이트의 배열이 주어지면 (처리량 제한) AllGather는 8xH100 노드에서 얼마나 걸릴까요? `D=4096`, `F=65,536`인 bf16[D<sub>X</sub>, F]에 대해 계산해 보세요. *이 질문에 답하기 전에 TPU collectives [섹션](https://jh-michael-shin.github.io/scaling-book/sharding/)을 읽어볼 가치가 있습니다. 여기서 이것을 생각해 보겠지만 다음에는 collectives에 대해 훨씬 더 많이 이야기할 것입니다.*
 
 {% details 답을 보려면 여기를 클릭하세요. %}
 
