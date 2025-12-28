@@ -2,7 +2,7 @@
 layout: distill
 title: "How to Think About TPUs"
 # permalink: /main/
-description: "이 섹션에서는 TPU가 어떻게 작동하는지, 멀티칩 훈련 및 추론을 위해 어떻게 서로 연결되는지, 그리고 이가 우리가 즐겨 사용하는 알고리즘의 성능에 어떤 영향을 미치는지에 대해 자세히 다룹니다. GPU 사용자에게도 유용한 정보가 있습니다!"
+description: "이 섹션에서는 TPU가 어떻게 작동하는지, 멀티칩 훈련 및 추론을 위해 어떻게 서로 연결되는지, 그리고 이것이 우리가 즐겨 사용하는 알고리즘의 성능에 어떤 영향을 미치는지에 대해 자세히 다룹니다. GPU 사용자에게도 유용한 정보가 있습니다!"
 date: 2025-02-04
 future: true
 htmlwidgets: true
@@ -58,10 +58,13 @@ toc:
   - name: Key Takeaways
   - subsections:
     - name: TPU Specs
+  - subsections:
+    - name: TPU Specs
   - name: Worked Problems
   - name: Appendix
   - subsections:
     - name: "Appendix A: More on TPU internals"
+    - name: "Appendix B: How does a systolic array work?"
     - name: "Appendix B: How does a systolic array work?"
 
 # Below is an example of injecting additional post-specific styles.
@@ -98,11 +101,11 @@ _styles: >
 
 TensorCore는 기본적으로 정말 뛰어난 행렬 곱셈 기계라고 생각할 수 있지만, 다른 주목할 만한 몇 가지 기능도 있습니다. TensorCore에는 세 가지 핵심 유닛이 있습니다:
 
-* **MXU** (Matrix Multiply Unit)는 TensorCore의 핵심입니다. 대부분의 TPU 세대에서, MXU는 시스톨릭 배열(systolic array)을 사용하여 8 사이클마다 `bfloat16[8,128] @ bf16[128,128] -> f32[8,128]` 행렬 곱셈<d-footnote>TPU v6e (Trillium)는 256x256 MXU를 사용하며, 이전 세대는 모두 128x128을 사용합니다.</d-footnote> 한 번 수행합니다 (<a href="#appendix-c-how-does-a-systolic-array-work">Appendix B</a> 참조).  
+* **MXU** (Matrix Multiply Unit)는 TensorCore의 핵심입니다. 대부분의 TPU 세대에서, MXU는 시스톨릭 배열(systolic array)을 사용하여 8 사이클마다 `bfloat16[8,128] @ bf16[128,128] -> f32[8,128]` 행렬 곱셈<d-footnote>TPU v6e (Trillium)는 256x256 MXU를 사용하며, 이전 세대는 모두 128x128을 사용합니다.</d-footnote>을 한 번 수행합니다 (<a href="#appendix-b-how-does-a-systolic-array-work">Appendix B</a> 참조).  
   * 이는 TPU v5e에서 1.5GHz로 작동할 때 MXU당 약 `5e13` bf16 FLOPs/s에 해당합니다. 대부분의 TensorCore에는 2개 또는 4개의 MXU가 있으므로, 예를 들어 TPU v5e의 총 bf16 FLOPs/s는 `2e14`입니다.  
   * TPU는 또한 더 높은 처리량을 가진 더 낮은 정밀도의 matmul도 지원합니다 (예: 각 TPU v5e 칩은 `4e14` int8 OPs/s를 수행할 수 있습니다).
 
-* **VPU** (Vector Processing Unit)는 ReLU 활성화나 벡터 간의 원소별 덧셈 또는 곱셈과 같은 일반적인 수학 연산을 수행합니다. Reduction(sums) 연산도 여기서 수행됩니다. 자세한 내용은 <a href="#appendix-a-more-on-tpu-internals">Appendix A</a> 에서 자세히 다룹니다. 
+* **VPU** (Vector Processing Unit)는 ReLU 활성화나 벡터 간의 원소별 덧셈 또는 곱셈과 같은 일반적인 수학 연산을 수행합니다. Reduction(합계) 연산도 여기서 수행됩니다. 자세한 내용은 <a href="#appendix-a-more-on-tpu-internals">Appendix A</a> 에서 자세히 다룹니다. 
 * **VMEM** (Vector Memory)은 TensorCore 내부에 위치한 온칩(on-chip) 스크래치패드로, 연산 유닛에 근접해있습니다. HBM보다 훨씬 작지만(예: TPU v5e에서는 128MiB) MXU와의 대역폭은 훨씬 높습니다. VMEM은 CPU의 L1/L2 캐시와 꽤나 유사하게 작동하지만, 훨씬 크고 프로그래머가 제어(programmer-controlled)할 수 있습니다. HBM의 데이터는 TensorCore가 계산을 수행하기 전에 VMEM으로 복사되어야 합니다.
 
 **TPU는 행렬 곱셈이 아주, 아주 빠릅니다**. 이는 TPU가 주로 하는 일이며, 성능 또한 뛰어납니다. 지금까지 가장 강력한 TPU 중 하나인 [TPU v5p](https://cloud.google.com/tpu/docs/v5p#system_architecture)는 코어당 초당 `2.5e14` bf16 FLOPs / second 또는 칩당 `5e14` bf16 FLOPs / second 을 수행할 수 있습니다. 8960개 칩으로 구성된 단일 pod는 초당 4 exaflops를 처리할 수 있습니다. 이는 *어마어마한* 양입니다. 이는 세계에서 가장 강력한 슈퍼컴퓨터 중 하나이며, 구글은 이를 다수 보유하고 있습니다.<d-footnote>TPU와 특히 이의 시스톨릭 배열(systolic arrays)이 이토록 강력한 하드웨어 가속기인 이유는, 행렬 곱셈이 $O(n^2)$ 바이트에 대해 $O(n^3)$의 연산을 사용하는 몇 안 되는 알고리즘 중 하나이기 때문입니다. 이로 인해 일반적인 ALU가 메모리 대역폭이 아닌 연산 자체에 의해 병목 현상을 겪기 매우 쉽습니다.</d-footnote>
@@ -161,7 +164,7 @@ TPU v5e와 Trillium pod는 크기가 16인 축을 따라 랩어라운드가 있�
 
 {% include figure.liquid path="assets/img/more-subslices.png" class="img-fluid" %}
 
-**최근접 이웃(nearest-neighbor) 연결성은 TPU와 GPU의 핵심적인 차이점입니다.** TPU처럼 로컬 연결을 사용하는 대신, GPU는 모든 GPU 간의 점대점(point-to-point) 연결을 근사화하는 계층적 스위치로 연결됩니다. 일반적으로 노드 내의 GPU(H100의 경우 8개, B200의 경우 최대 500개)는 직접 연결되지만, 더 큰 토폴로지에서는 각 GPU 간에 O(log(N)) 홉이 필요합니다. 한편으로는, 이는 GPU가 노드 내에서 임의의 데이터를 단일 저지연 홉(low-latency hop)으로 보낼 수 있음을 의미합니다. 다른 한편으로는, TPU가 훨씬 저렴하고(NVLink 스위치는 비쌉니다) 함께 연결하기가 더 간단하며, 장치당 링크 수와 장치당 대역폭이 일정하기 때문에 훨씬 더 큰 토폴로지로 확장할 수 있습니다.
+**최근접 이웃(nearest-neighbor) 연결성은 TPU와 GPU의 핵심적인 차이점입니다.** TPU처럼 로컬 연결을 사용하는 대신, GPU는 모든 GPU 간의 점대점(point-to-point) 연결을 근사화하는 계층적 스위치로 연결됩니다. 일반적으로 노드 내의 GPU(H100의 경우 8개, B200의 경우 최대 500개)는 직접 연결되지만, 더 큰 토폴로지에서는 각 GPU 간에 O(log(N)) 홉이 필요합니다. 한편으로는, 이는 GPU가 노드 내에서 임의의 데이터를 단일 저지연 홉(low-latency hop)으로 보낼 수 있음을 의미합니다. 다른 한편으로는, TPU가 훨씬 저렴하고(NVLink 스위치는 비쌉니다) 함께 연결하기가 더 간단하며, 장치당 링크 수와 장치당 대역폭이 일정하기 때문에 훨씬 더 큰 토폴로지로 확장할 수 있습니다. [여기](../gpus#networking)에서 자세한 내용을 읽어보세요.
 
 **ICI는 DCN에 비해 매우 빠르지만, HBM 대역폭보다는 여전히 느립니다.** 예를 들어, [TPU v5p](https://cloud.google.com/tpu/docs/v5p#system_architecture)는 :
 
@@ -191,6 +194,8 @@ TPU v5e와 Trillium pod는 크기가 16인 축을 따라 랩어라운드가 있�
 
 * TPU 연산 유닛에 병목이 생기는 것을 피하기 위해, **각 채널을 통한 통신량이 그 속도에 비례하도록 해야 합니다**.
 
+### TPU Specs
+
 * **다음은 우리 칩에 대한 몇 가지 구체적인 수치입니다:**
 
 | Model                                      | Pod size | Host size | HBM capacity/chip | HBM BW/chip (bytes/s) | FLOPs/s/chip (bf16) | FLOPs/s/chip (int8) |
@@ -205,7 +210,7 @@ TPU v5e와 Trillium pod는 크기가 16인 축을 따라 랩어라운드가 있�
 
 | Model       | ICI BW/link (one-way, bytes/s) | ICI BW/link (bidi, bytes/s) |
 | :---------- | :----------------------------: | :-------------------------: |
-| **TPU v3**  |              1e11              |            2e11             |
+| **TPU v3** |              1e11              |            2e11             |
 | **TPU v4p** |             4.5e10             |            9e10             |
 | **TPU v5p** |              9e10              |           1.8e11            |
 | **TPU v5e** |             4.5e10             |            9e10             |
@@ -213,7 +218,7 @@ TPU v5e와 Trillium pod는 크기가 16인 축을 따라 랩어라운드가 있�
 
 단방향(unidirectional) 대역폭이 하드웨어에 더 충실하지만, 완전한 링(full ring)을 포함하는 상황에서는 양방향(bidirectional) 대역폭이 더 자주 등장하므로 두 가지를 모두 포함합니다.<d-footnote>양방향(bidirectional) 대역폭이란 단일 링크를 따라 양방향으로 전송될 수 있는 총 바이트 수, 또는 동등하게, 두 링크를 효율적으로 사용할 수 있다고 가정할 때 특정 축을 따라 단일 TPU에서 나가는 총 바이트 수를 의미합니다. 이는 작동하는 링(functioning ring), 즉 특정 축에 랩어라운드(wraparound) 연결이 있을 때 해당됩니다. 이는 추론 칩에서 전체 16개 축이 있을 때, 또는 훈련 칩(v*p)에서 축이 4의 배수일 때 발생합니다. 양방향 통신을 포함하는 계산에 자주 등장하기 때문에 양방향 대역폭을 사용하는 것을 선호합니다.</d-footnote>
 
-PCIe 대역폭은 일반적으로 칩당 `1.5e10` bytes / second 정도이며<d-footnote>Trillium (TPU v6e)는 32GB/s로, v5보다 약 2배 높습니다.</d-footnote>, DCN 대역폭은 일반적으로 호스트당 `2.5e10` bytes / second 정도입니다. 완전성을 위해 단방향 및 양방향 대역폭을 모두 포함합니다. 일반적으로 완전한 랩어라운드 링에 접근할 수 있을 때 양방향 대역폭이 더 유용한 수치이며, 단방향 대역폭은 하드웨어에 더 충실합니다.
+PCIe 대역폭은 일반적으로 TPU당 약 `1.6e10` bytes / second (`3.2e10` for TPU v6e) 이며, DCN 대역폭은 일반적으로 TPU당 `6.25e9` bytes / second (`12.5e9` for TPU v6e and `3.125e9` for TPU v5e) 입니다.
 
 ## Worked Problems
 
@@ -239,7 +244,7 @@ PCIe 대역폭은 일반적으로 칩당 `1.5e10` bytes / second 정도이며<d-
 
 {% enddetails %}
 
-**문제 3 [PCIe operational intensity]:** $\text{bfloat16}[D, F]$ 타입의 큰 가중치 행렬 $A$와 $\text{bfloat16}[B, D]$ 타입의 활성화 배치 $x$를 호스트 DRAM에 저장하고, 이에 대한 행렬 곱셈을 수행해야 한다고 상상해 봅시다. 이는 단일 호스트에서 실행되며, 여기에 연결된 단일 TPU v6e 칩을 사용합니다. $B \\ll D$이고 $F = 4D$라고 가정할 수 있습니다(이러한 가정이 왜 합리적인지는 향후 챕터에서 확인해볼 수 있습니다). PCIe를 통해 FLOPs 병목 상태를 유지하기 위해 필요한 가장 작은 배치 크기 $B$는 얼마입니까? PCIe 대역폭을 초당 1.5e10 바이트로 가정합니다.
+**문제 3 [PCIe operational intensity]:** $\text{bfloat16}[D, F]$ 타입의 큰 가중치 행렬 $A$와 $\text{bfloat16}[B, D]$ 타입의 활성화 배치 $x$를 호스트 DRAM에 저장하고, 이에 대한 행렬 곱셈을 수행해야 한다고 상상해 봅시다. 이는 단일 호스트에서 실행되며, 여기에 연결된 단일 TPU v6e 칩을 사용합니다. $B \ll D$이고 $F = 4D$라고 가정할 수 있습니다(이러한 가정이 왜 합리적인지는 향후 챕터에서 확인해볼 수 있습니다). PCIe를 통해 FLOPs 병목 상태를 유지하기 위해 필요한 가장 작은 배치 크기 $B$는 얼마입니까? PCIe 대역폭을 초당 1.5e10 바이트로 가정합니다.
 
 {% details 답을 보려면 여기를 클릭하세요. %}
 
@@ -247,10 +252,11 @@ PCIe 대역폭은 일반적으로 칩당 `1.5e10` bytes / second 정도이며<d-
 모든 가중치 로딩을 계산과 중첩시킬 수 있다고 가정할 때, 계산이 가중치 로딩보다 오래 걸리게 하려면 다음 부등식이 성립해야 합니다: $2BDF / 9.2e14 > 2 \cdot (BD + DF + BF) / 1.5e10$ . $B \ll D$이고 $F = 4D$라는 가정을 사용하여 이를 단순화하면 다음과 같습니다.
 
 $$\frac{8BD^2}{9.2 \times 10^{14}} > \frac{8D^2}{1.5 \times 10^{10}}$$
+$$\frac{8BD^2}{9.2 \times 10^{14}} > \frac{8D^2}{1.5 \times 10^{10}}$$
 
 또는
 
-$$B > \frac{9.2 \times 10^{14}}{1.5 \times 10^{10}} \simeq 61{,}000$$
+$$B > \frac{9.2 \times 10^{14}}{1.5 \times 10^{10}} \simeq 61,000$$
 
 {% enddetails %}
 
@@ -264,8 +270,9 @@ $$B > \frac{9.2 \times 10^{14}}{1.5 \times 10^{10}} \simeq 61{,}000$$
 **답:** (1) 수행해야 하는 부동소수점 연산의 수는 $2 \cdot 4096 \cdot 16384 \cdot B = 1.3e8 \cdot B$입니다. 따라서 $T_{\text{math}} = (1.3e8 \cdot B) / 3.94e14$초입니다. HBM에서 VMEM으로 $16384 \cdot 4096 + 4096 \cdot B$ 바이트를 로드하고, VMEM에서 HBM으로 $16384 \cdot B$ 바이트를 다시 써야 합니다. 이는 $T_{\text{comms}} = (6.7e7 + 2e4\cdot B) / 8.1e11$초를 의미합니다. 통신과 계산이 최대한 중첩된다고 가정하면, 전체 곱셈은 대략 다음과 같이 걸릴 것입니다.
 
 $$\max\{T_{\text{math}}, T_{\text{comms}}\} = \max\left\{ \frac{6.7 \times 10^{7} + 2 \times 10^{4} \cdot B}{8.1 \times 10^{11}}, \frac{1.3 \times 10^{8} \cdot B}{3.94 \times 10^{14}} \right\}$$
+$$\max\{T_{\text{math}}, T_{\text{comms}}\} = \max\left\{ \frac{6.7 \times 10^{7} + 2 \times 10^{4} \cdot B}{8.1 \times 10^{11}}, \frac{1.3 \times 10^{8} \cdot B}{3.94 \times 10^{14}} \right\}$$
 
-$\frac{6.7e7 + 2e4\cdot B}{8.1e11} < \frac{1.3e8 \cdot B}{3.94e14}$일 때, 즉 $B > 271$일 때 FLOPs 병목 상태가 됩니다. 이는 $$D$$와 $$F$$의 전체 영향을 고려했기 때문에 아래에서 유도하는 240이라는 숫자보다 약간 큽니다.
+$\frac{6.7 \times 10^{7} + 2 \times 10^{4} \cdot B}{8.1 \times 10^{11}} < \frac{1.3 \times 10^{8} \cdot B}{3.94 \times 10^{14}}$일 때, 즉 $B > 271$일 때 FLOPs 병목 상태가 됩니다. 이는 $$D$$와$$F$$ 의 전체 영향을 고려했기 때문에 아래에서 유도하는 240이라는 숫자보다 약간 큽니다.
 
 (2) 대신 VMEM에서 로드하는 경우, MXU에 대한 VMEM 대역폭을 HBM $\leftrightarrow$ VMEM 대역폭의 22배로 간주합시다. 이렇게 하면 데이터 로딩 분모가 8.1e11에서 1.78e13으로 바뀌고, $B > 11$을 얻습니다. 실제로, 모든 VMEM 대역폭을 $W$ 로드에 할당할 수 없으므로 실제로는 20에 가까울 것입니다.
 
@@ -297,15 +304,15 @@ $\frac{6.7e7 + 2e4\cdot B}{8.1e11} < \frac{1.3e8 \cdot B}{3.94e14}$일 때, 즉 
 
 이제 각 부분이 얼마나 걸릴지 살펴보겠습니다:
 
-1.  **PCIe 로드**: 16개의 PCIe 링크를 통해 16GB / 2 = 8GB의 청크를 로드하고 있으며, 각 링크는 초당 `1.5e10` 바이트의 대역폭을 가집니다. 따라서 이는 약 33ms가 걸릴 것입니다.
+1.  **PCIe 로드**: 16개의 PCIe 링크를 통해 16GB / 2 = 8GB의 청크를 로드하고 있으며, 각 링크는 초당 `1.5e10` 바이트의 대역폭을 가집니다. 따라서 이는 약 66ms가 걸릴 것입니다.
 
 2.  **ICI 복사:** 각 TPU는 이제 배열의 16GB / 16 = 1GB를 가지고 있습니다. ICI 대역폭은 링크당 *양방향*으로 초당 9e10 바이트이며, 위 다이어그램에서 TPU{0,0}의 경우 이 토폴로지에서 4개의 ICI 링크 중 2개만 사용 중임을 알 수 있습니다. TPU{0,0}이 2개의 축을 따라 링크당 `4.5e10` bytes/s로 총 15GB를 수신해야 하므로, 시간의 하한은 `15e9 / (4.5e10 * 2) = 167ms`로 정할 수 있습니다. 실제로 로드가 매우 고르지 않기 때문에 이는 아마도 달성할 수 없겠지만, 아마도 2배 이내일 것입니다. 섹션 2에서 보게 되겠지만, 전체 AllGather를 수행하는 데도 대략 `16e9 / (4.5e10 * 2)`가 걸릴 것이므로, 이것은 최적에 가깝습니다.
 
 3. **HBM $\rightarrow$ MXU load:** 최종 matmul을 수행하려면, 이 16e9 바이트와 bf16[8, 128 \* 1024] 배열(또 다른 2MB이므로 무시 가능)을 HBM 대역폭을 통해 MXU로 로드해야 하며, 이는 `16e9 / 8.1e11 = 19ms`가 걸릴 것입니다.
 
-4.  **FLOPs:** 총 $$2 \cdot 8 \cdot 128 \cdot 1024 \cdot 128 \cdot 1024 = 2.7e11$$ FLOPs를 수행하고 있으며, 초당 `1.97e14` bf16 FLOPs를 수행할 수 있으므로 1.3ms를 얻습니다.
+4.  **FLOPs:** 총 $$2 \cdot 8 \cdot 128 \cdot 1024 \cdot 128 \cdot 1024 = 2.7 \times 10^{11}$$ FLOPs를 수행하고 있으며, 초당 `1.97e14` bf16 FLOPs를 수행할 수 있으므로 1.3ms를 얻습니다.
 
-총 시간에 대한 상한은 이 모든 시간의 합이지만, TPU가 일반적으로 이러한 작업을 중첩시킬 수 있으므로, 이는 가장 느린 부분이 병목이 되는 파이프라이닝 문제로 볼 수 있습니다. 그것이 사실이라고 가정하면, 답은 약 150-200ms입니다.
+총 시간에 대한 상한은 이 모든 시간의 합이지만, TPU가 일반적으로 이러한 작업을 중첩시킬 수 있으므로, 이는 가장 느린 부분이 병목이 되는 파이프라이닝 문제로 볼 수 있습니다. 그것이 사실이라고 가정하면, 답은 약 167ms이며, 불완전한 중첩을 고려하면 200ms에 가까울 것입니다.
 
 {% enddetails %}
 
@@ -329,13 +336,17 @@ VPU는 TPU의 벡터 연산 코어(vector arithmetic core)입니다. VPU는 vadd
 
 **Pop Quiz [Calculating VPU throughput]:** 위의 정보를 사용하여 TPU v5p가 초당 몇 번의 벡터 FLOPs를 수행할 수 있는지 계산해 보세요. TPU v5p의 클럭 속도는 약 1.75GHz입니다.
 
+{% details 답을 보려면 여기를 클릭하세요. %}
+
 *답*: 매 사이클마다 각 코어는 `8 * 128`개의 ALU에서 4개의 벡터 instruction을 실행할 수 있습니다. 이는 칩 전체에 대해 `8 * 128 * 4 * 2` FLOPs/cycle을 제공하며, 즉 `8 * 128 * 4 * 2 * 1.75e9 = 1.4e13 FLOPs/s`입니다. 이 값이 MXU FLOPs/s인 약 `2e14`(대략 10배 차이)보다 얼마나 작은지 주목하세요.
 
-**Reductions(축소)):** 일반적으로 서브레인 차원에서의 통신이나 축소는 레인 차원보다 쉽습니다. 예를 들어, VPU는 약 한 사이클 만에 크기 8의 축을 따라 롤링할 수 있는 레인 내 셔플(intra-lane shuffle) 연산을 지원합니다. 이는 서브레인 차원을 따라 효율적인 축소를 수행하는 데 사용될 수 있습니다(단지 2, 4, 6만큼 셔플하고 3쌍의 elementwise sums을 수행하면 됨).
+{% enddetails %}
+
+**Reductions:** 일반적으로 서브레인 차원에서의 통신이나 축소는 레인 차원보다 쉽습니다. 예를 들어, VPU는 약 한 사이클 만에 크기 8의 축을 따라 롤링할 수 있는 레인 내 셔플(intra-lane shuffle) 연산을 지원합니다. 이는 서브레인 차원을 따라 효율적인 축소를 수행하는 데 사용될 수 있습니다(단지 2, 4, 6만큼 셔플하고 3쌍의 elementwise sums을 수행하면 됨).
 
 Cross-lane reductions(교차 레인 축소)는 훨씬 더 어렵고 XLU 또는 "cross lane unit"이라는 별도의 하드웨어 유닛을 포함하며, 이는 느리고 상당히 비쌉니다.
 
-**GPU와의 비교:** NVIDIA GPU에 익숙한 분들을 위해 설명하자면, VPU의 각 ALU는 CUDA 코어와 유사하며, 단일 VPU 레인은 보통 32개의 CUDA 코어 세트로 구성된 SIMD 연산을 수행하는 "워프 스케줄러(Warp Scheduler)"와 유사합니다. 레인 내에서의 축소는 꽤 쉽지만, 레인을 넘어야 한다면 훨씬 느린 VMEM/XLU/SMEM을 최소 한 번 거쳐야 합니다.
+**Comparison to GPUs:** NVIDIA GPU에 익숙한 분들을 위해 설명하자면, VPU의 각 ALU는 CUDA 코어와 유사하며, 단일 VPU 레인은 보통 32개의 CUDA 코어 세트로 구성된 SIMD 연산을 수행하는 "워프 스케줄러(Warp Scheduler)"와 유사합니다. 레인 내에서의 축소는 꽤 쉽지만, 레인을 넘어야 한다면 훨씬 느린 VMEM/XLU/SMEM을 최소 한 번 거쳐야 합니다. 자세한 내용은 [GPU 섹션](../gpus)을 참조하세요.
 
 ### Scalar Core
 
@@ -343,37 +354,7 @@ Scalar Core(스칼라 코어)는 TPU의 제어 유닛입니다. 모든 instructi
 
 이것을 맥락에 넣어보면, 단일 스칼라 코어는 VPU(4096개의 ALU로 구성), 4개의 MXU, 2개의 XLU 및 여러 DMA 엔진을 제어합니다. 단위 연산당 제어의 고도로 편향된 특성은 하드웨어 효율성의 원천이지만, 흥미로운 방식으로 데이터 종속 벡터화를 수행하는 능력을 제한하기도 합니다.
 
-### Appendix B: All about GPUs
-
-Volta 세대(V100) 이후로, TPU와 GPU는 매우 유사해 보이기 시작했습니다: _둘 다 행렬 곱셈을 매우 빠르게 수행하는 것을 목표로 합니다_. 둘 다 CPU에 부착된 가속기로 작동하며 많은 구성 요소가 대략적으로 유사합니다(모든 용어를 모른다고 걱정하지 마세요, 나중에 모두 소개할 것입니다):
-
-|     TPU     |                    GPU                    |
-| :---------: | :---------------------------------------: |
-| Tensor Core |      SM ("Streaming Multiprocessor")      |
-|     HBM     |                   DRAM                    |
-|    VMEM     |     SMEM (often used as an L1 cache)      |
-|     VPU     | Warp scheduler (a set of SIMD CUDA cores) |
-|     MXU     |                Tensor Core                |
-|     ICI     |              NVLink/NVSwitch              |
-
-GPU의 핵심 유닛은 SM, 즉 "streaming multiprocessor(스트리밍 멀티프로세서)"이며, 이는 위에서 설명한 전체 TPU Tensor Core와 대략적으로 유사합니다. 하지만 TPU에 비해 GPU는 _훨씬_ 더 많은 SM을 가지고 있습니다(H100은 약 144개). 각 SM에는 TPU MXU처럼 작동하는 자체 행렬 곱셈 유닛(혼동스럽게도 Tensor Core라고 불림)과 TPU VPU처럼 작동하는 4개의 좁은 SIMD 유닛 세트(1024 레인 대신 32 레인)인 워프 스케줄러가 있습니다. 더 많은 독립적인 SM은 계산을 더 유연하게 만들지만(각각이 완전히 독립적인 작업을 할 수 있으므로), 하드웨어를 더 비싸고 추론하기 복잡하게 만듭니다.
-
-{% include figure.liquid path="assets/img/b100-sm-diagram.png" class="img-small" caption="<b>Figure:</b> Blackwell (B100) SM의 기본 구성 요소. 다이어그램은 4개의 SIMD 연산 유닛(워프 스케줄러라고 부름)을 보여주며, 각각 행렬 곱셈을 위한 Tensor Core를 가지고 있습니다. 또한 워프 스케줄러별 레지스터, SM 수준의 L1 캐시, 그리고 Blackwell에서 새로 추가된 TMEM 또는 텐서 메모리를 보여줍니다." %}
-
-각 SM에는 데이터 접근을 가속화하고 레지스터 spilling에 사용되는 O(256kB)의 L1 캐시(SMEM이라고도 함)가 있습니다. L1 캐시에 사용되는 메모리의 일부는 스레드 블록의 모든 스레드에서 접근할 수 있는 공유 메모리로 선언될 수도 있으며, user-defined(사용자 정의) 캐시, 병렬 축소 및 동기화 등에 사용됩니다(TPU의 VMEM과 유사).
-
-GPU에는 모든 SM이 공유하는 추가적인 L2 캐시도 있습니다. VMEM과 달리, 이는 하드웨어 관리되며 캐시 적중률을 최적화하는 것이 종종 성능에 중요합니다.
-
-**Networking:**
-
-* 주요 차이점은 NVIDIA GPU가 일반적으로 스위치(NVLink $\rightarrow$ NVSwitch)를 통해 8-256 GPU의 'clique'에 있다는 것입니다. 이는 해당 'clique' 내의 모든 GPU 간의 점대점 통신을 허용하지만, 256개 이상의 통신은 훨씬 느리다는 것을 의미합니다. 이는 256개 이상에서의 훈련은 일반적으로 확장을 위해 더 복잡한 파이프라인 병렬 처리가 필요함을 의미합니다(대조적으로, PaLM은 각각 3072개의 TPU 칩으로 구성된 두 개의 clique에서 훈련되었습니다).
-* AllReduce와 같은 일반적인 신경망 연산의 경우, all-to-all(전-대-전) 연결은 이점이 없습니다(어쨌든 동일한 통신 패턴이 발생해야 함). 하지만 더 많은 GPU에 MoE 모델을 저장하고 전문가(expert)를 더 효율적으로 전송할 수 있게 합니다.
-* 각 GPU는 GPU 자체와 비슷한 비용의 스위치를 필요로 하므로, ICI와 같은 온칩 interconnect이 더 저렴합니다.
-* [NVIDIA deep learning performance](https://docs.nvidia.com/deeplearning/performance/dl-performance-gpu-background/index.html#gpu-arch) 
-* [NVSwitch](https://www.nvidia.com/en-au/data-center/nvlink/) 
-* 텐서 병렬 처리 / 파이프라인 병렬 처리 전환점이 매우 다릅니다!
-
-### Appendix C: How does a systolic array work?
+### Appendix B: How does a systolic array work?
 
 TPU MXU의 핵심에는 `128x128` 시스톨릭 배열(TPU v6e에는 `256x256`)이 있습니다. 완전히 포화 상태(fully saturated)일 때, 시스톨릭 배열은 8 클럭 사이클마다 `bfloat16[8,128] @ bf16[128x128] -> f32[8,128]`<d-footnote>이 표기법에 익숙하지 않다면, 이는 bfloat16 element를 가진 `8x128` 행렬을 bfloat16 element를 가진 `128x128` 행렬과 곱하고 그 결과를 float32 element를 가진 `8x128` 행렬에 저장하는 것을 의미합니다.</d-footnote> 곱셈을 한 번 수행할 수 있습니다.
 
@@ -393,7 +374,6 @@ TPU MXU의 핵심에는 `128x128` 시스톨릭 배열(TPU v6e에는 `256x256`)�
 {% include figure.liquid path="assets/img/systolic-array-pipelining.png" class="img-fluid" %}
 
 가중치(RHS)와 활성화(LHS)가 로드될 때 초기 파이프라인 버블이 있습니다. 그 초기 버블 이후에는 추가적인 버블 없이 새로운 입력과 가중치를 로드할 수 있습니다.
-
 
 다음은 bf16[2, 3] x bf16[3, 3] 행렬 곱셈의 좋지 않은 애니메이션으로, 배치 1과 크기 3의 입력 활성화와 2x3 가중치 행렬의 matmul로 상상할 수 있습니다. 이것은 이전 슬라이드와 비교하여 회전되어 있으며 입력은 아래가 아닌 오른쪽으로 흐르지만, 대략적인 구조를 볼 수 있습니다.
 

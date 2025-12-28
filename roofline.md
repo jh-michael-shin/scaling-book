@@ -172,15 +172,15 @@ $$\begin{equation}
 
 <p markdown=1 class="takeaway">**Takeaway:** bfloat16 matmul이 대부분의 TPU에서 연산 병목 상태가 되려면, 로컬 토큰 배치 크기가 240보다 커야 합니다.<d-footnote>이는 일반적인 의미의 배치 크기, 즉 시퀀스 단위의 배치 크기를 의미하는 것이 _아닙니다_. 대부분의 루프라인은 토큰이 동일한 시퀀스에 속하든 다른 시퀀스에 속하든 순전히 토큰 수에만 의존하는 것으로 나타났습니다. 예를 들어, 128개의 GPU에서 4096 토큰으로 구성된 512개 시퀀스의 배치 크기를 사용하는 경우, 총 배치 크기는 '512 * 4096 = 2M' 토큰이고, 로컬 배치 크기는 16k 토큰입니다.</d-footnote></p>
 
-이는 아래 문제들에서 탐구할 몇 가지 주목할 만한 예외 사항을 동반하며, 특히 양자화(quantization)와 관련이 있습니다(예: 활성화를 양자화하지만 여전히 full-precision FLOPs를 수행하는 경우). 하지만 기억해두면 좋은 기준입니다. GPU의 경우 이 숫자는 약간 더 높지만(300에 가깝지만) 대체로 동일한 결론이 적용됩니다. [큰 matmul을 작은 matmul로 분해](https://docs.jax.dev/en/latest/pallas/tpu/matmul.html#your-first-matrix-multiplication-kernel)할 때, 타일 크기도 중요합니다.<d-footnote>큰 행렬 곱셈을 수행할 때는 연산을 더 작은 '타일(tile)'로 분해해서, 대역폭이 더 높은 온칩 메모리인 VMEM/SMEM/TMEM에 맞도록 만들어야 합니다. 이 과정에서 데이터 청크(chunk)를 여러 번 로드해야 하므로, 총 로드되는 데이터 양은 더 이상 $O(N^2)$ bytes 라고 단순하게 말할 수 없습니다. 예를 들어, $(m, k) \cdot (k, n)$ matmul의 타일 크기가  $bm$, $bk$, $bm$ 라고 하고 여기서 $tm = m / bm$, 등등 이라고 할 때, 총 FLOPs는 $2 \cdot tm \cdot tn \cdot tk \cdot m \cdot bk \cdot bm$ 이고 총 bytes는 $2 \cdot tm \cdot tn \cdot (tk \cdot (bm \cdot bk + bk \cdot bn) + 2 \cdot bm \cdot bn)$ 입니다. 마지막 항을 무시하면, intensity는 위와 유사하게 $bm \cdot bn / (bm + bn)$ 가 됩니다.</d-footnote> lower-level GPU와 TPU의 세부 사항은 [다음 섹션에서 논의할 것입니다](../tpus).
+이는 아래 문제들에서 탐구할 몇 가지 주목할 만한 예외 사항을 동반하며, 특히 양자화(quantization)와 관련이 있습니다(예: 활성화를 양자화하지만 여전히 full-precision FLOPs를 수행하는 경우). 하지만 기억해두면 좋은 기준입니다. GPU의 경우 이 숫자는 약간 더 높지만(300에 가깝지만) 대체로 동일한 결론이 적용됩니다. [큰 matmul을 작은 matmul로 분해](https://docs.jax.dev/en/latest/pallas/tpu/matmul.html#your-first-matrix-multiplication-kernel)할 때, 타일 크기도 중요합니다.<d-footnote>큰 행렬 곱셈을 수행할 때는 연산을 더 작은 '타일(tile)'로 분해해서, 대역폭이 더 높은 온칩 메모리인 VMEM/SMEM/TMEM에 맞도록 만들어야 합니다. 이 과정에서 데이터 청크(chunk)를 여러 번 로드해야 하므로, 총 로드되는 데이터 양은 더 이상 $O(N^2)$ bytes 라고 단순하게 말할 수 없습니다. 예를 들어, $(m, k) \cdot (k, n)$ matmul의 타일 크기가 $bm$, $bk$, $bm$ 라고 하고 여기서 $tm = m / bm$, 등등 이라고 할 때, 총 FLOPs는 $2 \cdot tm \cdot tn \cdot tk \cdot m \cdot bk \cdot bm$ 이고 총 bytes는 $2 \cdot tm \cdot tn \cdot (tk \cdot (bm \cdot bk + bk \cdot bn) + 2 \cdot bm \cdot bn)$ 입니다. 마지막 항을 무시하면, intensity는 위와 유사하게 $bm \cdot bn / (bm + bn)$ 가 됩니다.</d-footnote> lower-level GPU와 TPU의 세부 사항은 [다음 섹션에서 논의할 것입니다](../tpus).
 
 ### Network communication rooflines
 
 지금까지 논의한 모든 루프라인은 _단일 칩 내의_ 메모리 대역폭 루프라인이었습니다. 이를 기본으로 받아들여서는 안 됩니다. 사실, 이 책에서 우리가 관심을 가질 대부분의 루프라인은 칩 간의 통신을 포함합니다: 보통 여러 TPU에 걸쳐 샤딩된(sharded) 행렬을 포함하는 행렬 곱셈입니다.
 
-다소 작위적인 예를 들어본다면, 2개의 TPU/GPU에 ($D$ 차원을 따라) 균등하게 분할된 두 개의 큰 행렬 $X\sim \text{bfloat16[B, D]}$ 와 $Y \sim \text{bfloat16[D, F]}$ 를 곱하고 싶다고 가정해 봅시다. 이 곱셈을 수행하기 위해 ([섹션 3](../sharding)에서 보게 될 것처럼), 각 TPU에서 행렬의 절반을 곱하고 (`A = X[:, :D // 2] @ Y[:D // 2, :]` 는 TPU 0에서, `B = X[:, D // 2:] @ Y[D // 2:, :]` 는 TPU 1에서) 그 결과인 "partial sums(부분 합)" 을 다른 TPU로 복사하여 더할 수 있습니다. 각 방향으로 `4.5e10` bytes를 복사할 수 있고 각 칩에서 `1.97e14` FLOPs/s를 수행할 수 있다고 가정합시다. $T_\text{math}$ 와 $T_\text{comms}$ 는 얼마일까요?
+다소 작위적인 예를 들어본다면, 2개의 TPU/GPU에 ($D$ 차원을 따라) 균등하게 분할된 두 개의 큰 행렬 $X\sim \text{bfloat16[B, D]}$ 와 $Y \sim \text{bfloat16[D, F]}$ 를 곱하고 싶다고 가정해 봅시다. 이 곱셈을 수행하기 위해 ([섹션 3](../sharding)에서 보게 될 것처럼), 각 TPU에서 행렬의 절반을 곱하고 (`A = X[:, :D // 2] @ Y[:D // 2, :]` 는 TPU 0에서, `B = X[:, D // 2:] @ Y[D // 2:, :]` 는 TPU 1에서) 그 결과인 "**부분 합(partial sums)**" 을 다른 TPU로 복사하여 더할 수 있습니다. 각 방향으로 `4.5e10` bytes를 복사할 수 있고 각 칩에서 `1.97e14` FLOPs/s를 수행할 수 있다고 가정합시다. $T_\text{math}$ 와 $T_\text{comms}$ 는 얼마일까요?
 
-$T_\text{math}$ 는 각 TPU가 작업의 절반을 수행하므로 이전의 절반이 분명합니다, 다시 말하자면<d-footnote>두 partial sums을 더하는 데 필요한 FLOPs(또 다른 DF 덧셈)는 무시하고 있습니다만, 이는 거의 무시할 수 있는 수준입니다.</d-footnote>
+$T_\text{math}$ 는 각 TPU가 작업의 절반을 수행하므로 이전의 절반이 분명합니다, 다시 말하자면<d-footnote>두 partial sums을 더하는 데 필요한 FLOPs(추가적인 BF 덧셈)는 무시하고 있습니다만, 이는 거의 무시할 수 있는 수준입니다.</d-footnote>
 
 $$T_\text{math} = \frac{2BDF}{2 \cdot \text{Accelerator FLOPs/s}} = \frac{BDF}{1.97e14}$$
 
@@ -210,10 +210,9 @@ HBM 대역폭은 `8.1e11` bytes/s 이고 int8의 peak OPs/s는 `3.94e14` 이라�
 
 {% enddetails %}
 
-**Question 2 [int8 + bf16 matmul]:** In practice we often do different weight vs. activation quantization, 
-실제로는 가중치와 활성화에 대해 다른 양자화를 사용하는 경우가 많습니다. 가중치는 매우 낮은 정밀도로 저장하고 활성화(및 계산)는 더 높은 정밀도로 유지할 수 있습니다. 가중치는 int8로 양자화하고 활성화(및 계산)는 bfloat16으로 유지하고 싶다고 가정해 봅시다. 어떤 배치 크기에서 연산 병목 상태가 될까요? `1.97e14` bfloat16 FLOPs/s를 가정합니다.
+**Question 2 [int8 + bf16 matmul]:** 실제로는 가중치와 활성화에 대해 다른 양자화를 사용하는 경우가 많습니다. 가중치는 매우 낮은 정밀도로 저장하고 활성화(및 계산)는 더 높은 정밀도로 유지할 수 있습니다. 가중치는 int8로 양자화하고 활성화(및 계산)는 bfloat16으로 유지하고 싶다고 가정해 봅시다. 어떤 배치 크기에서 연산 병목 상태가 될까요? `1.97e14` bfloat16 FLOPs/s를 가정합니다.
 
-*Hint: $B$ 가 배치 크기일 때 `bfloat16[B, D] * int8[D, F] -> bfloat16[B, F]` 입니다.
+*Hint: $B$ 가 배치 크기일 때 `bfloat16[B, D] * int8[D, F] -> bfloat16[B, F]` 입니다.*
 
 {% details 답을 보려면 여기를 클릭하세요. %}
 
